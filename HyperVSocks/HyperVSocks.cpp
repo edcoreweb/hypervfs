@@ -38,13 +38,6 @@ typedef struct
     uint32 ctime;
 } HyperVStat;
 
-typedef struct
-{
-    char name[MAX_PATH];
-    HyperVStat stat;
-} HyperVFile;
-
-
 enum
 {
     HYPERV_OK = 0,
@@ -114,7 +107,7 @@ HyperVStat* getAttr(const char *path)
 
 char* makePath(char* path, char* name)
 {
-    char *filePath = (char*) calloc(MAX_PATH, sizeof(char));
+    char *filePath = (char*) calloc(1, strlen(path) + 2 + strlen(name) + 1);
     strcpy(filePath, path);
     strcat(filePath, "\\");
     strcat(filePath, name);
@@ -124,18 +117,19 @@ char* makePath(char* path, char* name)
 
 int readDir(char* path, int bufferSize, char *buffer)
 {
-    char fPath[MAX_PATH];
+    char *fPath = (char*) calloc(1, strlen(path) + 3 + 1);
     strcpy(fPath, path);
     strcat(fPath, "\\*");
 
     WIN32_FIND_DATA fileinfo;
     HANDLE handle = FindFirstFile(fPath, &fileinfo);
+    free(fPath);
     // TODO: error handling
     short status = HYPERV_OK;
 
     // prefix with status code
     bufferSize += sizeof(short);
-    buffer = (char*)realloc(buffer, bufferSize);
+    buffer = (char*) realloc(buffer, bufferSize);
     memcpy(buffer, &status, sizeof(short));
 
     int size = bufferSize;
