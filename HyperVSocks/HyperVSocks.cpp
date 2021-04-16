@@ -23,17 +23,18 @@
 typedef uint64_t uint64;
 typedef uint32_t uint32;
 
+// this needs to be aligned
 typedef struct
 {
+    uint64 fsid;
+    uint64 fileid;
+    uint64 size;
+    uint64 used;
     uint32 type;
     uint32 mode;
     uint32 nlink;
     uint32 uid;
     uint32 gid;
-    uint64 size;
-    uint64 used;
-    uint64 fsid;
-    uint64 fileid;
     uint32 atime;
     uint32 mtime;
     uint32 ctime;
