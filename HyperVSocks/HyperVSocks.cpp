@@ -18,6 +18,12 @@
 
 #define TICKS_PER_SECOND 10000000
 #define EPOCH_DIFFERENCE 11644473600
+
+/* File types.  */
+#define S_IFDIR	0040000 /* Directory.  */
+#define S_IFREG	0100000 /* Regular file.  */
+#define S_IFLNK	0120000 /* Symbolic link.  */
+
 #define ROOT "H:\\WORK\\vhosts-cifs\\load-test"
 
 typedef uint64_t uint64;
@@ -80,15 +86,17 @@ HyperVStat* getPathAttr(const char *path)
 
     uint32 fileAttr = GetFileAttributes(path);
     // TODO: check for errors
-
-    stat->type = 0;
+    
     uint32 dwFlagsAndAttributes = 0;
 
     if (fileAttr & FILE_ATTRIBUTE_DIRECTORY) {
-        stat->type = 1;
+        stat->type = 0;
+        stat->mode = S_IFDIR | 0755;
         dwFlagsAndAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_FLAG_BACKUP_SEMANTICS;
     }
     else {
+        stat->type = 1;
+        stat->mode = S_IFREG | 0644;
         dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
     }
 
@@ -103,32 +111,39 @@ HyperVStat* getPathAttr(const char *path)
     GetFileInformationByHandle(hFile, &lpFileInformation);
     CloseHandle(hFile);
 
-    stat->nlink = lpFileInformation.nNumberOfLinks;
-    stat->size = makeLong(lpFileInformation.nFileSizeHigh, lpFileInformation.nFileSizeLow);
-    stat->used = stat->size;
     stat->fsid = (uint64)lpFileInformation.dwVolumeSerialNumber;
     stat->fileid = makeLong(lpFileInformation.nFileIndexHigh, lpFileInformation.nFileIndexLow);
+    stat->size = makeLong(lpFileInformation.nFileSizeHigh, lpFileInformation.nFileSizeLow);
+    stat->used = stat->size;
+    stat->nlink = lpFileInformation.nNumberOfLinks;
     stat->atime = fileTimeToUnix(lpFileInformation.ftLastAccessTime);
     stat->mtime = fileTimeToUnix(lpFileInformation.ftLastWriteTime);
-    stat->ctime = fileTimeToUnix(lpFileInformation.ftLastWriteTime);
+    stat->ctime = fileTimeToUnix(lpFileInformation.ftCreationTime);
 
     return stat;
 }
 
 char* cleanPath(const char* name)
 {
-    // TODO: maybe alocate this dynamically
-    char cleaned[MAX_PATH] = { 0 };
+    int len = strlen(name);
+
+    // root /
+    if (len == 1) {
+        return NULL;
+    }
+
+    // all parts start with /, which gets removed
+    char* cleaned = (char*) calloc(1, len);
     int next = 0;
 
     // skip starting slash
-    for (int i = 1; i < strlen(name); i++)
+    for (int i = 1; i < strlen(name) + 1; i++)
     {
         // find "/" and replace them with "\\"
         if (name[i] == '/')
         {
             cleaned[next++] = '\\';
-            cleaned[next++] = '\\';
+            continue;
         }
 
         cleaned[next++] = name[i];
@@ -138,20 +153,34 @@ char* cleanPath(const char* name)
     return cleaned;
 }
 
-char* makePath(const char* path, const char* name, int clean = 0)
+char* makePath(const char* path, const char* name)
 {
-    if (clean) {
-        name = cleanPath(name);
-    }
+    int len = strlen(name);
+    int size = len == 0 ? 1 : len + 2;
 
-    char *filePath = (char*) calloc(1, strlen(path) + 2 + strlen(name) + 1);
+    char *filePath = (char*) calloc(1, strlen(path) + size);
+
     strcpy(filePath, path);
 
-    if (strlen(name))
-    {
-        strcat(filePath, "\\");
+    if (len) {
+        filePath[strlen(path)] = '\\';
         strcat(filePath, name);
     }
+
+    return filePath;
+}
+
+char* makeCleanPath(const char* path, const char* name)
+{
+    char* cleaned = cleanPath(name);
+
+    if (!cleaned)
+    {
+        return makePath(path, "");
+    }
+
+    char* filePath = makePath(path, cleaned);
+    free(cleaned);
 
     return filePath;
 }
@@ -173,7 +202,7 @@ int opReadAttr(char* inBuffer, char** outBuffer)
     char* path = inBuffer + offset;
 
     // prefix the path
-    char* filePath = makePath(ROOT, path, 1);
+    char* filePath = makeCleanPath(ROOT, path);
     HyperVStat* stat = getPathAttr(filePath);
 
     free(filePath);
@@ -188,7 +217,7 @@ int opReadAttr(char* inBuffer, char** outBuffer)
 
     memcpy(*outBuffer, &size, sizeof(uint64));
     memcpy(*outBuffer + sizeof(uint64), &status, sizeof(short));
-    memcpy(*outBuffer + sizeof(uint64) + sizeof(short), &stat, sizeof(HyperVStat));
+    memcpy(*outBuffer + sizeof(uint64) + sizeof(short), stat, sizeof(HyperVStat));
 
     free(stat);
 
@@ -201,7 +230,7 @@ int opReadDir(char* inBuffer, char** outBuffer)
     char* path = inBuffer + offset;
 
     // prefix the path
-    char* dirPath = makePath(ROOT, path);
+    char* dirPath = makeCleanPath(ROOT, path);
 
     char *findPath = (char*) calloc(1, strlen(dirPath) + 3 + 1);
     strcpy(findPath, dirPath);
@@ -226,13 +255,8 @@ int opReadDir(char* inBuffer, char** outBuffer)
     char* buffer = NULL;
 
     do {
-        // skip . and ..
-        if (strcmp(fileinfo.cFileName, ".") == 0 || strcmp(fileinfo.cFileName, "..") == 0) {
-            continue;
-        }
-       
         // get file stat
-        char* filePath = makePath(path, fileinfo.cFileName);
+        char* filePath = makePath(dirPath, fileinfo.cFileName);
         HyperVStat* stat = getPathAttr(filePath);
         free(filePath);
 
@@ -275,7 +299,7 @@ int opReadDir(char* inBuffer, char** outBuffer)
 
     memcpy(*outBuffer, &size, sizeof(uint64));
     memcpy(*outBuffer + sizeof(uint64), &status, sizeof(short));
-    memcpy(*outBuffer + sizeof(uint64) + sizeof(short), &buffer, realSize);
+    memcpy(*outBuffer + sizeof(uint64) + sizeof(short), buffer, realSize);
 
     free(buffer);
 
@@ -294,8 +318,8 @@ int readMessage(int socket, char** buffer)
         return 0;
     }
 
-    memcpy(&size, &sizeBuffer, sizeof(uint64));
-    printf("Got message of size: %l\n", size);
+    memcpy(&size, sizeBuffer, sizeof(uint64));
+    printf("Got message of size: %d\n", size);
 
     *buffer = (char*) malloc(size);
     memcpy(*buffer, sizeBuffer, sizeof(uint64));
@@ -306,8 +330,6 @@ int readMessage(int socket, char** buffer)
         free(buffer);
         return 0;
     }
-
-    printf("Message: %s\n", buffer);
 
     return size;
 }

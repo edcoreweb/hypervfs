@@ -23,6 +23,7 @@
 
 #include <sys/socket.h>
 #include <linux/vm_sockets.h>
+#include <pthread.h>
 
 
 #define PORT_NUM 5001
@@ -58,6 +59,7 @@ enum
 };
 
 int sServer = -1;
+pthread_mutex_t sServerLock = PTHREAD_MUTEX_INITIALIZER;
 
 struct timespec toTimeSpec(uint32 sec)
 {
@@ -104,6 +106,21 @@ int opReadAttr(const char* path, char** outBuffer)
 	return size;
 }
 
+int opReadDir(const char* path, char** outBuffer)
+{
+	short opCode = HYPERV_READDIR;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
+	*outBuffer = (char*)malloc(size);
+
+	memcpy(*outBuffer, &size, sizeof(uint64));
+	memcpy(*outBuffer + sizeof(uint64), &opCode, sizeof(short));
+	memcpy(*outBuffer + sizeof(uint64) + sizeof(short), &pathLength, sizeof(short));
+	memcpy(*outBuffer + sizeof(uint64) + sizeof(short) + sizeof(short), path, pathLength);
+
+	return size;
+}
+
 int readMessage(int socket, char** buffer)
 {
 	uint64 size = 0;
@@ -116,8 +133,8 @@ int readMessage(int socket, char** buffer)
 		return 0;
 	}
 
-	memcpy(&size, &sizeBuffer, sizeof(uint64));
-	printf("Got message of size: %l\n", size);
+	memcpy(&size, sizeBuffer, sizeof(uint64));
+	printf("Got message of size: %d\n", size);
 
 	*buffer = (char*)malloc(size);
 	memcpy(*buffer, sizeBuffer, sizeof(uint64));
@@ -129,13 +146,15 @@ int readMessage(int socket, char** buffer)
 		return 0;
 	}
 
-	printf("Message: %s\n", buffer);
+	pthread_mutex_unlock(&sServerLock);
 
 	return size;
 }
 
 int sendMessage(int socket, char* buffer)
 {
+	pthread_mutex_lock(&sServerLock);
+
 	uint64* size = (uint64*)buffer;
 
 	return send(socket, buffer, *size, 0);
@@ -193,9 +212,10 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 
 	HyperVStat* stat = (HyperVStat*)(inBuffer + sizeof(uint64) + sizeof(short));
 
+	// stbuf->st_dev = stat->fsid;
 	stbuf->st_ino = stat->fileid;
 	stbuf->st_nlink = stat->nlink;
-	stbuf->st_mode = S_IFDIR | 0755;
+	stbuf->st_mode = stat->mode;
 	stbuf->st_gid = getgid();
 	stbuf->st_uid = getuid();
 	stbuf->st_size = stat->size;
@@ -239,30 +259,62 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	enum fuse_readdir_flags flags)
 {
 	printf("Function call [xmp_readdir] on path %s\n", path);
-	DIR* dp;
-	struct dirent* de;
 
 	(void)offset;
 	(void)fi;
 	(void)flags;
 
-	// send_vsock(path);
-	// send_vsock("A very nice message, with a coma and a dot.");
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
 
-	dp = opendir(path);
-	if (dp == NULL)
-		return -errno;
+	ret = opReadDir(path, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
 
-	while ((de = readdir(dp)) != NULL) {
-		struct stat st;
-		memset(&st, 0, sizeof(st));
-		st.st_ino = de->d_ino;
-		st.st_mode = de->d_type << 12;
-		if (filler(buf, de->d_name, &st, 0, FUSE_FILL_DIR_PLUS))
-			break;
+	ret = readMessage(sServer, &inBuffer);
+
+	uint64* size = (uint64*)inBuffer;
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
 	}
 
-	closedir(dp);
+	uint64 readSize = sizeof(uint64) + sizeof(short);
+
+	while (*size > readSize) {
+		// we also have the name size, but names are NULL terminated
+		short* nameLength = (short*)(inBuffer + readSize);
+		readSize += sizeof(short);
+
+		// read name
+		char* name = (char*)(inBuffer + readSize);
+		readSize += *nameLength;
+
+		// read stat
+		HyperVStat* stat = (HyperVStat*)(inBuffer + readSize);
+		readSize += sizeof(HyperVStat);
+
+		// convert
+		struct stat st = { 0 };
+		// st.st_dev = stat->fsid;
+		st.st_ino = stat->fileid;
+		st.st_nlink = stat->nlink;
+		st.st_mode = stat->mode;
+		st.st_gid = getgid();
+		st.st_uid = getuid();
+		st.st_size = stat->size;
+		st.st_atim = toTimeSpec(stat->atime);
+		st.st_mtim = toTimeSpec(stat->mtime);
+		st.st_ctim = toTimeSpec(stat->ctime);
+
+		// fill
+		filler(buf, name, &st, 0, FUSE_FILL_DIR_PLUS);
+	}
+
 	return 0;
 }
 
