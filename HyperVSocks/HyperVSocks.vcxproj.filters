@@ -18,5 +18,8 @@
     <ClCompile Include="HyperVSocks.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Client.cpp">
+      <Filter>Resource Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
