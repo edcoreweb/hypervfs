@@ -31,6 +31,7 @@
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
+typedef int64_t int64;
 
 typedef struct
 {
@@ -55,7 +56,8 @@ enum
 
 	// op codes
 	HYPERV_ATTR = 10,
-	HYPERV_READDIR = 20
+	HYPERV_READDIR = 20,
+	HYPERV_READ = 30
 };
 
 int sServer = -1;
@@ -121,12 +123,40 @@ int opReadDir(const char* path, char** outBuffer)
 	return size;
 }
 
+int opRead(const char* path, uint64 rSize, int64 rOffset, char** outBuffer)
+{
+	short opCode = HYPERV_READ;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint64) + sizeof(int64);
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	offset += pathLength;
+	memcpy(*outBuffer + offset, &rSize, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &rOffset, sizeof(int64));
+
+	return size;
+}
+
 int readMessage(int socket, char** buffer)
 {
 	uint64 size = 0;
 	char sizeBuffer[sizeof(uint64)];
 
-	int ret = recv(socket, sizeBuffer, sizeof(uint64), 0);
+	int ret = recv(socket, sizeBuffer, sizeof(uint64), MSG_WAITALL);
 
 	// if we read 0 bytes, connection might be closed, return
 	if (ret <= 0) {
@@ -138,12 +168,22 @@ int readMessage(int socket, char** buffer)
 
 	*buffer = (char*)malloc(size);
 	memcpy(*buffer, sizeBuffer, sizeof(uint64));
-	ret = recv(socket, *buffer + sizeof(uint64), size - sizeof(uint64), 0);
 
-	// if we read 0 bytes, connection might be closed, return
-	if (ret <= 0) {
-		free(buffer);
-		return 0;
+	uint64 rOffset = sizeof(uint64);
+	uint64 rSize = size - rOffset;
+
+	while (rSize > 0)
+	{
+		ret = recv(socket, *buffer + rOffset, rSize, 0);
+
+		// if we read 0 bytes, connection might be closed, return
+		if (ret <= 0) {
+			free(buffer);
+			return 0;
+		}
+
+		rSize -= ret;
+		rOffset += ret;
 	}
 
 	pthread_mutex_unlock(&sServerLock);
@@ -315,6 +355,8 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 		filler(buf, name, &st, 0, FUSE_FILL_DIR_PLUS);
 	}
 
+	free(inBuffer);
+
 	return 0;
 }
 
@@ -466,13 +508,13 @@ static int xmp_create(const char* path, mode_t mode,
 static int xmp_open(const char* path, struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_open] on path %s\n", path);
-	int res;
+	// int res;
 
-	res = open(path, fi->flags);
-	if (res == -1)
-		return -errno;
+	// res = open(path, fi->flags);
+	// if (res == -1)
+	// 	return -errno;
 
-	fi->fh = res;
+	// fi->fh = res;
 	return 0;
 }
 
@@ -480,24 +522,38 @@ static int xmp_read(const char* path, char* buf, size_t size, off_t offset,
 	struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_read] on path %s\n", path);
-	int fd;
-	int res;
 
-	if (fi == NULL)
-		fd = open(path, O_RDONLY);
-	else
-		fd = fi->fh;
+	(void)fi;
 
-	if (fd == -1)
-		return -errno;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
 
-	res = pread(fd, buf, size, offset);
-	if (res == -1)
-		res = -errno;
+	ret = opRead(path, size, offset, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
 
-	if (fi == NULL)
-		close(fd);
-	return res;
+	ret = readMessage(sServer, &inBuffer);
+
+	int iOffset = sizeof(uint64);
+	short* status = (short*)(inBuffer + iOffset);
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	uint64 bytesRead = 0;
+	iOffset += sizeof(short);
+	memcpy(&bytesRead, inBuffer + iOffset, sizeof(uint64));
+
+	iOffset += sizeof(uint64);
+	memcpy(buf, inBuffer + iOffset, bytesRead);
+
+	free(inBuffer);
+
+	return bytesRead;
 }
 
 static int xmp_write(const char* path, const char* buf, size_t size,
@@ -541,7 +597,7 @@ static int xmp_release(const char* path, struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_release] on path %s\n", path);
 	(void)path;
-	close(fi->fh);
+	(void)fi;
 	return 0;
 }
 

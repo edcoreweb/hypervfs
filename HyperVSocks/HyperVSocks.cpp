@@ -28,6 +28,7 @@
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
+typedef int64_t int64;
 
 // this needs to be aligned
 typedef struct
@@ -53,7 +54,8 @@ enum
 
     // op codes
     HYPERV_ATTR = 10,
-    HYPERV_READDIR = 20
+    HYPERV_READDIR = 20,
+    HYPERV_READ = 30
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -306,12 +308,73 @@ int opReadDir(char* inBuffer, char** outBuffer)
     return size;
 }
 
+int opRead(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*) (inBuffer + offset);
+
+    offset += sizeof(short);
+    char* path = inBuffer + offset;
+    char* fPath = makeCleanPath(ROOT, path);
+
+    HANDLE hFile = CreateFile(fPath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(fPath);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    offset += *pathLength;
+    uint64* rSize = (uint64*) (inBuffer + offset);
+
+    offset += sizeof(uint64);
+    int64* rOffset = (int64*) (inBuffer + offset);
+
+    // TODO: maybe validate rSize
+    char* buffer = (char*) calloc(1, *rSize);
+
+    // set offset
+    LARGE_INTEGER lrOffset;
+    lrOffset.QuadPart = *rOffset;
+    SetFilePointer(hFile, lrOffset.LowPart, &lrOffset.HighPart, FILE_BEGIN);
+
+    unsigned long readBytes = 0;
+    int success = ReadFile(hFile, buffer, *rSize, &readBytes, NULL);
+    CloseHandle(hFile);
+
+    if (!success)
+    {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    int status = HYPERV_OK;
+    uint64 lReadBytes = (uint64) readBytes;
+    uint64 size = sizeof(uint64) + sizeof(short) + sizeof(uint64) + lReadBytes;
+    *outBuffer = (char*) malloc(size);
+
+    offset = 0;
+    memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+    offset += sizeof(uint64);
+    memcpy(*outBuffer + offset, &status, sizeof(short));
+
+    offset += sizeof(short);
+    memcpy(*outBuffer + offset, &lReadBytes, sizeof(uint64));
+
+    offset += sizeof(uint64);
+    memcpy(*outBuffer + offset, buffer, lReadBytes);
+
+    free(buffer);
+
+    return size;
+}
+
 int readMessage(int socket, char** buffer)
 {
     uint64 size = 0;
     char sizeBuffer[sizeof(uint64)];
 
-    int ret = recv(socket, sizeBuffer, sizeof(uint64), 0);
+    int ret = recv(socket, sizeBuffer, sizeof(uint64), MSG_WAITALL);
 
     // if we read 0 bytes, connection might be closed, return
     if (ret <= 0) {
@@ -321,14 +384,24 @@ int readMessage(int socket, char** buffer)
     memcpy(&size, sizeBuffer, sizeof(uint64));
     printf("Got message of size: %d\n", size);
 
-    *buffer = (char*) malloc(size);
+    *buffer = (char*)malloc(size);
     memcpy(*buffer, sizeBuffer, sizeof(uint64));
-    ret = recv(socket, *buffer + sizeof(uint64), size - sizeof(uint64), 0);
 
-    // if we read 0 bytes, connection might be closed, return
-    if (ret <= 0) {
-        free(buffer);
-        return 0;
+    uint64 rOffset = sizeof(uint64);
+    uint64 rSize = size - rOffset;
+
+    while (rSize > 0)
+    {
+        ret = recv(socket, *buffer + rOffset, rSize, 0);
+
+        // if we read 0 bytes, connection might be closed, return
+        if (ret <= 0) {
+            free(buffer);
+            return 0;
+        }
+
+        rSize -= ret;
+        rOffset += ret;
     }
 
     return size;
@@ -352,6 +425,8 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opReadAttr(inBuffer, outBuffer);
     case HYPERV_READDIR:
         return opReadDir(inBuffer, outBuffer);
+    case HYPERV_READ:
+        return opRead(inBuffer, outBuffer);
     default:
         return opError(HYPERV_NOENT, outBuffer);
     }
