@@ -55,7 +55,10 @@ enum
     // op codes
     HYPERV_ATTR = 10,
     HYPERV_READDIR = 20,
-    HYPERV_READ = 30
+    HYPERV_READ = 30,
+    HYPERV_CREATE = 40,
+    HYPERV_WRITE = 50,
+    HYPERV_UNLINK = 60
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -194,6 +197,18 @@ int opError(short err, char** outBuffer)
 
     memcpy(*outBuffer, &size, sizeof(uint64));
     memcpy(*outBuffer + sizeof(uint64), &err, sizeof(short));
+
+    return (int)size;
+}
+
+int opOk(char** outBuffer)
+{
+    uint64 size = sizeof(uint64) + sizeof(short);
+    *outBuffer = (char*)malloc(size);
+
+    short status = HYPERV_OK;
+    memcpy(*outBuffer, &size, sizeof(uint64));
+    memcpy(*outBuffer + sizeof(uint64), &status, sizeof(short));
 
     return (int)size;
 }
@@ -369,6 +384,100 @@ int opRead(char* inBuffer, char** outBuffer)
     return size;
 }
 
+int opCreate(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*) (inBuffer + offset);
+
+    offset += sizeof(short);
+    char* path = inBuffer + offset;
+    char* fPath = makeCleanPath(ROOT, path);
+
+    HANDLE hFile = CreateFile(fPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(fPath);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    CloseHandle(hFile);
+
+    return opOk(outBuffer);
+}
+
+int opWrite(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* path = inBuffer + offset;
+    char* fPath = makeCleanPath(ROOT, path);
+
+    HANDLE hFile = CreateFile(fPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(fPath);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    offset += *pathLength;
+    uint64* wSize = (uint64*)(inBuffer + offset);
+
+    offset += sizeof(uint64);
+    int64* wOffset = (int64*)(inBuffer + offset);
+
+    // set offset
+    LARGE_INTEGER lrOffset;
+    lrOffset.QuadPart = *wOffset;
+    SetFilePointer(hFile, lrOffset.LowPart, &lrOffset.HighPart, FILE_BEGIN);
+
+    offset += sizeof(int64);
+    unsigned long writtenBytes = 0;
+    int success = WriteFile(hFile, inBuffer + offset, *wSize, &writtenBytes, NULL);
+    CloseHandle(hFile);
+
+    if (!success)
+    {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    int status = HYPERV_OK;
+    uint64 lWrittenBytes = (uint64)writtenBytes;
+    uint64 size = sizeof(uint64) + sizeof(short) + sizeof(uint64);
+    *outBuffer = (char*)malloc(size);
+
+    offset = 0;
+    memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+    offset += sizeof(uint64);
+    memcpy(*outBuffer + offset, &status, sizeof(short));
+
+    offset += sizeof(short);
+    memcpy(*outBuffer + offset, &lWrittenBytes, sizeof(uint64));
+
+    return size;
+}
+
+int opUnlink(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* path = inBuffer + offset;
+    char* fPath = makeCleanPath(ROOT, path);
+
+    int success = DeleteFile(fPath);
+    free(fPath);
+
+    if (!success) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    return opOk(outBuffer);
+}
+
 int readMessage(int socket, char** buffer)
 {
     uint64 size = 0;
@@ -427,6 +536,12 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opReadDir(inBuffer, outBuffer);
     case HYPERV_READ:
         return opRead(inBuffer, outBuffer);
+    case HYPERV_CREATE:
+        return opCreate(inBuffer, outBuffer);
+    case HYPERV_WRITE:
+        return opWrite(inBuffer, outBuffer);
+    case HYPERV_UNLINK:
+        return opUnlink(inBuffer, outBuffer);
     default:
         return opError(HYPERV_NOENT, outBuffer);
     }

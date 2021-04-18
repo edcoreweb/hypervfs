@@ -57,7 +57,10 @@ enum
 	// op codes
 	HYPERV_ATTR = 10,
 	HYPERV_READDIR = 20,
-	HYPERV_READ = 30
+	HYPERV_READ = 30,
+	HYPERV_CREATE = 40,
+	HYPERV_WRITE = 50,
+	HYPERV_UNLINK = 60
 };
 
 int sServer = -1;
@@ -151,6 +154,62 @@ int opRead(const char* path, uint64 rSize, int64 rOffset, char** outBuffer)
 	return size;
 }
 
+int opCreate(const char* path, uint32 mode, char** outBuffer)
+{
+	short opCode = HYPERV_CREATE;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint32);
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	offset += pathLength;
+	memcpy(*outBuffer + offset, &mode, sizeof(uint32));
+
+	return size;
+}
+
+int opWrite(const char* path, uint64 wSize, int64 wOffset, const char* buffer, char** outBuffer)
+{
+	short opCode = HYPERV_WRITE;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint64) + sizeof(int64) + wSize;
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	offset += pathLength;
+	memcpy(*outBuffer + offset, &wSize, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &wOffset, sizeof(int64));
+
+	offset += sizeof(int64);
+	memcpy(*outBuffer + offset, buffer, wSize);
+
+	return size;
+}
+
 int readMessage(int socket, char** buffer)
 {
 	uint64 size = 0;
@@ -187,6 +246,28 @@ int readMessage(int socket, char** buffer)
 	}
 
 	pthread_mutex_unlock(&sServerLock);
+
+	return size;
+}
+
+int opUnlink(const char* path, char** outBuffer)
+{
+	short opCode = HYPERV_UNLINK;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
 
 	return size;
 }
@@ -387,11 +468,26 @@ static int xmp_mkdir(const char* path, mode_t mode)
 static int xmp_unlink(const char* path)
 {
 	printf("Function call [xmp_unlink] on path %s\n", path);
-	int res;
 
-	res = unlink(path);
-	if (res == -1)
-		return -errno;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opUnlink(path, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(sServer, &inBuffer);
+
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
 
 	return 0;
 }
@@ -495,26 +591,38 @@ static int xmp_create(const char* path, mode_t mode,
 	struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_create] on path %s\n", path);
-	int res;
 
-	res = open(path, fi->flags, mode);
-	if (res == -1)
-		return -errno;
+	(void)fi;
 
-	fi->fh = res;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opCreate(path, mode, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(sServer, &inBuffer);
+
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
+
 	return 0;
 }
 
 static int xmp_open(const char* path, struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_open] on path %s\n", path);
-	// int res;
 
-	// res = open(path, fi->flags);
-	// if (res == -1)
-	// 	return -errno;
+	(void)fi;
 
-	// fi->fh = res;
 	return 0;
 }
 
@@ -560,25 +668,35 @@ static int xmp_write(const char* path, const char* buf, size_t size,
 	off_t offset, struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_write] on path %s\n", path);
-	int fd;
-	int res;
 
 	(void)fi;
-	if (fi == NULL)
-		fd = open(path, O_WRONLY);
-	else
-		fd = fi->fh;
 
-	if (fd == -1)
-		return -errno;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
 
-	res = pwrite(fd, buf, size, offset);
-	if (res == -1)
-		res = -errno;
+	ret = opWrite(path, size, offset, buf, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
 
-	if (fi == NULL)
-		close(fd);
-	return res;
+	ret = readMessage(sServer, &inBuffer);
+
+	int iOffset = sizeof(uint64);
+	short* status = (short*)(inBuffer + iOffset);
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	uint64 bytesWritten = 0;
+	iOffset += sizeof(short);
+	memcpy(&bytesWritten, inBuffer + iOffset, sizeof(uint64));
+
+	free(inBuffer);
+
+	return bytesWritten;
 }
 
 static int xmp_statfs(const char* path, struct statvfs* stbuf)
