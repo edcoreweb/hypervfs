@@ -61,7 +61,9 @@ enum
 	HYPERV_CREATE = 40,
 	HYPERV_WRITE = 50,
 	HYPERV_UNLINK = 60,
-	HYPERV_TRUNCATE = 70
+	HYPERV_TRUNCATE = 70,
+	HYPERV_MKDIR = 80,
+	HYPERV_RMDIR = 90
 };
 
 int sServer = -1;
@@ -211,6 +213,28 @@ int opWrite(const char* path, uint64 wSize, int64 wOffset, const char* buffer, c
 	return size;
 }
 
+int opUnlink(const char* path, char** outBuffer)
+{
+	short opCode = HYPERV_UNLINK;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	return size;
+}
+
 int opTruncate(const char* path, int64 tOffset, char** outBuffer)
 {
 	short opCode = HYPERV_TRUNCATE;
@@ -232,6 +256,53 @@ int opTruncate(const char* path, int64 tOffset, char** outBuffer)
 
 	offset += pathLength;
 	memcpy(*outBuffer + offset, &tOffset, sizeof(int64));
+
+	return size;
+}
+
+int opMkdir(const char* path, uint32 mode, char** outBuffer)
+{
+	short opCode = HYPERV_MKDIR;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint32);
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	offset += pathLength;
+	memcpy(*outBuffer + offset, &mode, sizeof(uint32));
+
+	return size;
+}
+
+int opRmdir(const char* path, char** outBuffer)
+{
+	short opCode = HYPERV_RMDIR;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
 
 	return size;
 }
@@ -276,28 +347,6 @@ int readMessage(int socket, char** buffer)
 	return size;
 }
 
-int opUnlink(const char* path, char** outBuffer)
-{
-	short opCode = HYPERV_UNLINK;
-	short pathLength = strlen(path) + 1;
-	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
-	*outBuffer = (char*)malloc(size);
-
-	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
-
-	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
-
-	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
-
-	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
-
-	return size;
-}
-
 int sendMessage(int socket, char* buffer)
 {
 	pthread_mutex_lock(&sServerLock);
@@ -331,7 +380,6 @@ static void* xmp_init(struct fuse_conn_info* conn,
 
 	return NULL;
 }
-
 
 static int xmp_getattr(const char* path, struct stat* stbuf,
 	struct fuse_file_info* fi)
@@ -377,29 +425,17 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 
 static int xmp_access(const char* path, int mask)
 {
-	printf("Function call [xmp_access] on path %s\n", path);
-	// int res;
-
-	// res = access(path, mask);
-	// if (res == -1)
-	// 	return -errno;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_access] on path %s\n", path);
 
 	return 0;
 }
 
 static int xmp_readlink(const char* path, char* buf, size_t size)
 {
-	printf("Function call [xmp_readlink] on path %s\n", path);
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_readlink] on path %s\n", path);
 
-	res = readlink(path, buf, size - 1);
-	if (res == -1)
-		return -errno;
-
-	buf[res] = '\0';
-	return 0;
+	return -ENOSYS;
 }
-
 
 static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	off_t offset, struct fuse_file_info* fi,
@@ -469,24 +505,34 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 
 static int xmp_mknod(const char* path, mode_t mode, dev_t rdev)
 {
-	printf("Function call [xmp_mknod] on path %s\n", path);
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_mknod] on path %s\n", path);
 
-	res = mknod_wrapper(AT_FDCWD, path, NULL, mode, rdev);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return -ENOSYS;
 }
 
 static int xmp_mkdir(const char* path, mode_t mode)
 {
 	printf("Function call [xmp_mkdir] on path %s\n", path);
-	int res;
 
-	res = mkdir(path, mode);
-	if (res == -1)
-		return -errno;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opMkdir(path, mode, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(sServer, &inBuffer);
+
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
 
 	return 0;
 }
@@ -521,25 +567,35 @@ static int xmp_unlink(const char* path)
 static int xmp_rmdir(const char* path)
 {
 	printf("Function call [xmp_rmdir] on path %s\n", path);
-	int res;
 
-	res = rmdir(path);
-	if (res == -1)
-		return -errno;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opRmdir(path, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(sServer, &inBuffer);
+
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
 
 	return 0;
 }
 
 static int xmp_symlink(const char* from, const char* to)
 {
-	printf("Function call [xmp_symlink] on path %s\n", from);
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_symlink] on path %s to %s\n", from, to);
 
-	res = symlink(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return -ENOSYS;
 }
 
 static int xmp_rename(const char* from, const char* to, unsigned int flags)
@@ -559,42 +615,25 @@ static int xmp_rename(const char* from, const char* to, unsigned int flags)
 
 static int xmp_link(const char* from, const char* to)
 {
-	printf("Function call [xmp_link] on path %s\n", from);
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_link] on path %s to %s\n", from, to);
 
-	res = link(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return -ENOSYS;
 }
 
 static int xmp_chmod(const char* path, mode_t mode,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_chmod] on path %s\n", path);
-	(void)fi;
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_chmod] on path %s\n", path);
 
-	res = chmod(path, mode);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return -ENOSYS;
 }
 
 static int xmp_chown(const char* path, uid_t uid, gid_t gid,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_chown] on path %s\n", path);
-	(void)fi;
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_chown] on path %s\n", path);
 
-	res = lchown(path, uid, gid);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return -ENOSYS;
 }
 
 static int xmp_truncate(const char* path, off_t offset,
@@ -742,14 +781,9 @@ static int xmp_write(const char* path, const char* buf, size_t size,
 
 static int xmp_statfs(const char* path, struct statvfs* stbuf)
 {
-	printf("Function call [xmp_statfs] on path %s\n", path);
-	int res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_statfs] on path %s\n", path);
 
-	res = statvfs(path, stbuf);
-	if (res == -1)
-		return -errno;
-
-	return 0;
+	return -ENOSYS;
 }
 
 static int xmp_release(const char* path, struct fuse_file_info* fi)
@@ -775,25 +809,9 @@ static int xmp_fsync(const char* path, int isdatasync,
 
 static off_t xmp_lseek(const char* path, off_t off, int whence, struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_lseek] on path %s\n", path);
-	int fd;
-	off_t res;
+	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_lseek] on path %s\n", path);
 
-	if (fi == NULL)
-		fd = open(path, O_RDONLY);
-	else
-		fd = fi->fh;
-
-	if (fd == -1)
-		return -errno;
-
-	res = lseek(fd, off, whence);
-	if (res == -1)
-		res = -errno;
-
-	if (fi == NULL)
-		close(fd);
-	return res;
+	return -ENOSYS;
 }
 
 static const struct fuse_operations xmp_oper = {
