@@ -58,7 +58,8 @@ enum
     HYPERV_READ = 30,
     HYPERV_CREATE = 40,
     HYPERV_WRITE = 50,
-    HYPERV_UNLINK = 60
+    HYPERV_UNLINK = 60,
+    HYPERV_TRUNCATE = 70
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -67,8 +68,7 @@ void Log(int ret, const char* function, int retZeroSuccess = 1)
 
     if (success) {
         printf("%s success\n", function);
-    }
-    else {
+    } else {
         printf("%s error: %d\n", function, WSAGetLastError());
     }
 }
@@ -478,6 +478,39 @@ int opUnlink(char* inBuffer, char** outBuffer)
     return opOk(outBuffer);
 }
 
+int opTruncate(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* path = inBuffer + offset;
+    char* fPath = makeCleanPath(ROOT, path);
+
+    HANDLE hFile = CreateFile(fPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(fPath);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    offset += *pathLength;
+    int64* tOffset = (int64*)(inBuffer + offset);
+
+    // set offset
+    LARGE_INTEGER ltOffset;
+    ltOffset.QuadPart = *tOffset;
+    SetFilePointer(hFile, ltOffset.LowPart, &ltOffset.HighPart, FILE_BEGIN);
+    int success = SetEndOfFile(hFile);
+    CloseHandle(hFile);
+
+    if (!success) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    return opOk(outBuffer);
+}
+
 int readMessage(int socket, char** buffer)
 {
     uint64 size = 0;
@@ -491,7 +524,6 @@ int readMessage(int socket, char** buffer)
     }
 
     memcpy(&size, sizeBuffer, sizeof(uint64));
-    printf("Got message of size: %d\n", size);
 
     *buffer = (char*)malloc(size);
     memcpy(*buffer, sizeBuffer, sizeof(uint64));
@@ -542,6 +574,8 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opWrite(inBuffer, outBuffer);
     case HYPERV_UNLINK:
         return opUnlink(inBuffer, outBuffer);
+    case HYPERV_TRUNCATE:
+        return opTruncate(inBuffer, outBuffer);
     default:
         return opError(HYPERV_NOENT, outBuffer);
     }
@@ -549,52 +583,12 @@ int processMessage(char* inBuffer, char** outBuffer)
 
 int main(void)
 {
-    /*char* buffer = NULL;
-    opReadDir((char*) "H:\\WORK\\vhosts-cifs\\load-test", 0, buffer);
-    return 0;
-
-    // read it back to test
-    size = bufferSize;
-    bufferSize = 0;
-
-    // read status
-    bufferSize += sizeof(short);
-    short* st = (short*)calloc(1, sizeof(short));
-    memcpy(st, buffer, sizeof(short));
-    free(st);
-
-
-    while (bufferSize < size) {
-        // read name length
-        short* len = (short*)calloc(1, sizeof(short));
-        memcpy(len, buffer + bufferSize, sizeof(short));
-
-        // read name
-        bufferSize += sizeof(short);
-        char* name = (char*)calloc(1, *len);
-        memcpy(name, buffer + bufferSize, *len);
-
-        // read stat
-        bufferSize += *len;
-        HyperVStat* stat = (HyperVStat*)malloc(sizeof(HyperVStat));
-        memcpy(stat, buffer + bufferSize, sizeof(HyperVStat));
-
-        free(len);
-        free(name);
-        free(stat);
-
-        bufferSize += sizeof(HyperVStat);
-    }
-
-    return bufferSize;*/
-
-
     WSADATA wdata;
     int ret = WSAStartup(MAKEWORD(2,2), &wdata);
     Log(ret, "WSAStartup");
 
     SOCKET sServer = socket(AF_HYPERV, SOCK_STREAM, HV_PROTOCOL_RAW);
-    Log(ret, "socket", 0);
+    Log(sServer, "server socket", 0);
 
     SOCKADDR_HV addr = { 0 };
     addr.Family = AF_HYPERV;
@@ -607,26 +601,41 @@ int main(void)
     ret = listen(sServer, 1);
     Log(ret, "listen");
 
+    accept:
     SOCKET sClient = accept(sServer, NULL, NULL);
-    Log(ret, "socket", 0);
-
-    char* inBuffer = NULL;
-    char* outBuffer = NULL;
+    Log(sClient, "client socket", 0);
 
     do
     {
+        char* inBuffer = NULL;
+        char* outBuffer = NULL;
+
         ret = readMessage(sClient, &inBuffer);
+
+        if (ret <= 0) {
+            goto cleanup;
+        }
+
         ret = processMessage(inBuffer, &outBuffer);
         ret = sendMessage(sClient, outBuffer);
 
-        free(inBuffer);
-        free(outBuffer);
+    cleanup:
+        if (inBuffer) {
+            free(inBuffer);
+        }
+        
+        if (outBuffer) {
+            free(outBuffer);
+        }
 
     } while (ret > 0);
 
 
-    /* cleanup */
     closesocket(sClient);
+
+    // TODO: exit condition
+    goto accept;
+
     closesocket(sServer);
     WSACleanup();
     return 0;

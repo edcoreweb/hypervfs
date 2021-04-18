@@ -60,7 +60,8 @@ enum
 	HYPERV_READ = 30,
 	HYPERV_CREATE = 40,
 	HYPERV_WRITE = 50,
-	HYPERV_UNLINK = 60
+	HYPERV_UNLINK = 60,
+	HYPERV_TRUNCATE = 70
 };
 
 int sServer = -1;
@@ -210,6 +211,31 @@ int opWrite(const char* path, uint64 wSize, int64 wOffset, const char* buffer, c
 	return size;
 }
 
+int opTruncate(const char* path, int64 tOffset, char** outBuffer)
+{
+	short opCode = HYPERV_TRUNCATE;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(int64);
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	offset += pathLength;
+	memcpy(*outBuffer + offset, &tOffset, sizeof(int64));
+
+	return size;
+}
+
 int readMessage(int socket, char** buffer)
 {
 	uint64 size = 0;
@@ -223,7 +249,7 @@ int readMessage(int socket, char** buffer)
 	}
 
 	memcpy(&size, sizeBuffer, sizeof(uint64));
-	printf("Got message of size: %d\n", size);
+	printf("Got message of size: %ld\n", size);
 
 	*buffer = (char*)malloc(size);
 	memcpy(*buffer, sizeBuffer, sizeof(uint64));
@@ -571,18 +597,33 @@ static int xmp_chown(const char* path, uid_t uid, gid_t gid,
 	return 0;
 }
 
-static int xmp_truncate(const char* path, off_t size,
+static int xmp_truncate(const char* path, off_t offset,
 	struct fuse_file_info* fi)
 {
 	printf("Function call [xmp_truncate] on path %s\n", path);
-	int res;
 
-	if (fi != NULL)
-		res = ftruncate(fi->fh, size);
-	else
-		res = truncate(path, size);
-	if (res == -1)
-		return -errno;
+	(void)fi;
+
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opTruncate(path, offset, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(sServer, &inBuffer);
+
+	int iOffset = sizeof(uint64);
+	short* status = (short*)(inBuffer + iOffset);
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
 
 	return 0;
 }
