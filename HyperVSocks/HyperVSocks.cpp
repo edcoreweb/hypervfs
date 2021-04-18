@@ -61,7 +61,8 @@ enum
     HYPERV_UNLINK = 60,
     HYPERV_TRUNCATE = 70,
     HYPERV_MKDIR = 80,
-    HYPERV_RMDIR = 90
+    HYPERV_RMDIR = 90,
+    HYPERV_RENAME = 100
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -551,6 +552,31 @@ int opRmdir(char* inBuffer, char** outBuffer)
     return opOk(outBuffer);
 }
 
+int opRename(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* from = inBuffer + offset;
+
+    offset += *pathLength + sizeof(short);
+    char* to = inBuffer + offset;
+
+    char* fromPath = makeCleanPath(ROOT, from);
+    char* toPath = makeCleanPath(ROOT, to);
+
+    int success = MoveFile(fromPath, toPath);
+    free(fromPath);
+    free(toPath);
+
+    if (!success) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    return opOk(outBuffer);
+}
+
 int readMessage(int socket, char** buffer)
 {
     uint64 size = 0;
@@ -620,6 +646,8 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opMkdir(inBuffer, outBuffer);
     case HYPERV_RMDIR:
         return opRmdir(inBuffer, outBuffer);
+    case HYPERV_RENAME:
+        return opRename(inBuffer, outBuffer);
     default:
         return opError(HYPERV_NOENT, outBuffer);
     }

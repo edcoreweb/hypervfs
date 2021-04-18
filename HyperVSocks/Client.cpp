@@ -18,9 +18,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/time.h>
-
-#include "passthrough_helpers.h"
-
 #include <sys/socket.h>
 #include <linux/vm_sockets.h>
 #include <pthread.h>
@@ -63,7 +60,8 @@ enum
 	HYPERV_UNLINK = 60,
 	HYPERV_TRUNCATE = 70,
 	HYPERV_MKDIR = 80,
-	HYPERV_RMDIR = 90
+	HYPERV_RMDIR = 90,
+	HYPERV_RENAME = 100
 };
 
 int sServer = -1;
@@ -307,6 +305,35 @@ int opRmdir(const char* path, char** outBuffer)
 	return size;
 }
 
+int opRename(const char* from, const char* to, char** outBuffer)
+{
+	short opCode = HYPERV_RENAME;
+	short fromLength = strlen(from) + 1;
+	short toLength = strlen(to) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + fromLength + sizeof(short) + toLength;
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &fromLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, from, fromLength);
+
+	offset += fromLength;
+	memcpy(*outBuffer + offset, &toLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, to, toLength);
+
+	return size;
+}
+
 int readMessage(int socket, char** buffer)
 {
 	uint64 size = 0;
@@ -320,7 +347,6 @@ int readMessage(int socket, char** buffer)
 	}
 
 	memcpy(&size, sizeBuffer, sizeof(uint64));
-	printf("Got message of size: %ld\n", size);
 
 	*buffer = (char*)malloc(size);
 	memcpy(*buffer, sizeBuffer, sizeof(uint64));
@@ -601,14 +627,26 @@ static int xmp_symlink(const char* from, const char* to)
 static int xmp_rename(const char* from, const char* to, unsigned int flags)
 {
 	printf("Function call [xmp_rename] on path %s\n", from);
-	int res;
 
-	if (flags)
-		return -EINVAL;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
 
-	res = rename(from, to);
-	if (res == -1)
-		return -errno;
+	ret = opRename(from, to, &outBuffer);
+	ret = sendMessage(sServer, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(sServer, &inBuffer);
+
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
 
 	return 0;
 }
