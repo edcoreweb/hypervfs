@@ -15,6 +15,7 @@
 #define PORT_NUM 5001
 #define BUFF_SIZE 512
 #define MAX_PATH 260
+#define SOCKET_NUM 4
 
 #define TICKS_PER_SECOND 10000000
 #define EPOCH_DIFFERENCE 11644473600
@@ -653,6 +654,41 @@ int processMessage(char* inBuffer, char** outBuffer)
     }
 }
 
+DWORD WINAPI handleOp (void* arg)
+{
+    uint64 sClient = *((uint64*)arg);
+    int ret = 0;
+
+    do
+    {
+        char* inBuffer = NULL;
+        char* outBuffer = NULL;
+
+        ret = readMessage(sClient, &inBuffer);
+
+        if (ret <= 0) {
+            goto cleanup;
+        }
+
+        ret = processMessage(inBuffer, &outBuffer);
+        ret = sendMessage(sClient, outBuffer);
+
+    cleanup:
+        if (inBuffer) {
+            free(inBuffer);
+        }
+
+        if (outBuffer) {
+            free(outBuffer);
+        }
+
+    } while (ret > 0);
+
+    closesocket(sClient);
+
+    return 0;
+}
+
 int main(void)
 {
     WSADATA wdata;
@@ -673,40 +709,20 @@ int main(void)
     ret = listen(sServer, 1);
     Log(ret, "listen");
 
-    accept:
-    SOCKET sClient = accept(sServer, NULL, NULL);
-    Log(sClient, "client socket", 0);
+    SOCKET sClients[SOCKET_NUM];
+    HANDLE threads[SOCKET_NUM];
 
-    do
-    {
-        char* inBuffer = NULL;
-        char* outBuffer = NULL;
+    for (int i = 0; i < SOCKET_NUM; i++) {
+        sClients[i] = accept(sServer, NULL, NULL);
+        Log(sClients[i], "client socket", 0);
+        threads[i] = CreateThread(NULL, 0, handleOp, (void*) sClients[i], 0, NULL);
+    }
 
-        ret = readMessage(sClient, &inBuffer);
+    WaitForMultipleObjects(SOCKET_NUM, threads, true, INFINITE);
 
-        if (ret <= 0) {
-            goto cleanup;
-        }
-
-        ret = processMessage(inBuffer, &outBuffer);
-        ret = sendMessage(sClient, outBuffer);
-
-    cleanup:
-        if (inBuffer) {
-            free(inBuffer);
-        }
-        
-        if (outBuffer) {
-            free(outBuffer);
-        }
-
-    } while (ret > 0);
-
-
-    closesocket(sClient);
-
-    // TODO: exit condition
-    goto accept;
+    for (int i = 0; i < SOCKET_NUM; i++) {
+        CloseHandle(threads[i]);
+    }
 
     closesocket(sServer);
     WSACleanup();
