@@ -25,6 +25,7 @@
 
 #define PORT_NUM 5001
 #define BUFF_SIZE 512
+#define SOCKET_NUM 4
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -64,8 +65,9 @@ enum
 	HYPERV_RENAME = 100
 };
 
-int sServer = -1;
-pthread_mutex_t sServerLock = PTHREAD_MUTEX_INITIALIZER;
+int sSockets[SOCKET_NUM] = { 0 };
+pthread_mutex_t sSocketLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t sSocketCond = PTHREAD_COND_INITIALIZER;
 
 struct timespec toTimeSpec(uint32 sec)
 {
@@ -79,21 +81,14 @@ struct timespec toTimeSpec(uint32 sec)
 
 void opConnect()
 {
-
-	sServer = socket(AF_VSOCK, SOCK_STREAM, 0);
-	if (sServer < 0) {
-		printf("socket error: %s\n", strerror(errno));
-	}
-
 	struct sockaddr_vm addr = { 0 };
 	addr.svm_family = AF_VSOCK;
 	addr.svm_port = PORT_NUM;
 	addr.svm_cid = VMADDR_CID_HOST;
 
-	int ret = connect(sServer, (struct sockaddr*)&addr, sizeof addr);
-
-	if (ret < 0) {
-		printf("connect error: %s\n", strerror(errno));
+	for (int i = 0; i < SOCKET_NUM; i++) {
+		sSockets[i] = socket(AF_VSOCK, SOCK_STREAM, 0);
+		connect(sSockets[i], (struct sockaddr*)&addr, sizeof addr);
 	}
 }
 
@@ -334,6 +329,47 @@ int opRename(const char* from, const char* to, char** outBuffer)
 	return size;
 }
 
+int aquireSocket()
+{
+	pthread_mutex_lock(&sSocketLock);
+
+	aquire:
+	int socket = 0;
+
+	for (int i = 0; i < SOCKET_NUM; i++) {
+		if (sSockets[i]) {
+			socket = sSockets[i]
+			sSockets[i] = 0;
+		}
+	}
+
+	if (!socket) {
+		pthread_cond_wait(&sSocketCond, &sSocketLock);
+		goto aquire;
+	}
+
+
+	pthread_mutex_unlock(&sSocketLock);
+
+	return socket;
+}
+
+void releaseSocket(int socket)
+{
+	pthread_mutex_lock(&sSocketLock);
+
+	// find first empty position
+	for (int i = 0; i < SOCKET_NUM; i++) {
+		if (!sSockets[i]) {
+			sSockets[i] = socket;
+		}
+	}
+
+	pthread_cond_signal(&sSocketCond);
+
+	pthread_mutex_unlock(&sSocketLock);
+}
+
 int readMessage(int socket, char** buffer)
 {
 	uint64 size = 0;
@@ -368,15 +404,11 @@ int readMessage(int socket, char** buffer)
 		rOffset += ret;
 	}
 
-	pthread_mutex_unlock(&sServerLock);
-
 	return size;
 }
 
 int sendMessage(int socket, char* buffer)
 {
-	pthread_mutex_lock(&sServerLock);
-
 	uint64* size = (uint64*)buffer;
 
 	return send(socket, buffer, *size, 0);
