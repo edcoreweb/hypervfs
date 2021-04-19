@@ -333,12 +333,12 @@ int aquireSocket()
 {
 	pthread_mutex_lock(&sSocketLock);
 
-	aquire:
 	int socket = 0;
 
+aquire:
 	for (int i = 0; i < SOCKET_NUM; i++) {
 		if (sSockets[i]) {
-			socket = sSockets[i]
+			socket = sSockets[i];
 			sSockets[i] = 0;
 		}
 	}
@@ -419,7 +419,7 @@ int sendMessage(int socket, char* buffer)
 static void* xmp_init(struct fuse_conn_info* conn,
 	struct fuse_config* cfg)
 {
-	printf("Function call [xmp_init]\n");
+	printf("Function call [init]\n");
 	(void)conn;
 	cfg->use_ino = 1;
 
@@ -430,9 +430,9 @@ static void* xmp_init(struct fuse_conn_info* conn,
 	   the cache of the associated inode - resulting in an
 	   incorrect st_nlink value being reported for any remaining
 	   hardlinks to this inode. */
-	cfg->entry_timeout = 0;
-	cfg->attr_timeout = 0;
-	cfg->negative_timeout = 0;
+	   // cfg->entry_timeout = 0;
+	   // cfg->attr_timeout = 0;
+	   // cfg->negative_timeout = 0;
 
 	opConnect();
 
@@ -442,7 +442,7 @@ static void* xmp_init(struct fuse_conn_info* conn,
 static int xmp_getattr(const char* path, struct stat* stbuf,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_getattr] on path %s\n", path);
+	printf("Function call [getattr] on path %s\n", path);
 	(void)fi;
 
 	int ret;
@@ -450,10 +450,13 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 	char* outBuffer = NULL;
 
 	ret = opReadAttr(path, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
@@ -483,14 +486,14 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 
 static int xmp_access(const char* path, int mask)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_access] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [access] on path %s\n", path);
 
 	return 0;
 }
 
 static int xmp_readlink(const char* path, char* buf, size_t size)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_readlink] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [readlink] on path %s\n", path);
 
 	return -ENOSYS;
 }
@@ -499,7 +502,11 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	off_t offset, struct fuse_file_info* fi,
 	enum fuse_readdir_flags flags)
 {
-	printf("Function call [xmp_readdir] on path %s\n", path);
+	printf("Function call [readdir] on path %s\n", path);
+
+	if (offset > 0) {
+		return 0;
+	}
 
 	(void)offset;
 	(void)fi;
@@ -510,10 +517,13 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	char* outBuffer = NULL;
 
 	ret = opReadDir(path, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	uint64* size = (uint64*)inBuffer;
 	short* status = (short*)(inBuffer + sizeof(uint64));
@@ -525,6 +535,7 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	}
 
 	uint64 readSize = sizeof(uint64) + sizeof(short);
+	int64 dOffset = 1;
 
 	while (*size > readSize) {
 		// we also have the name size, but names are NULL terminated
@@ -541,7 +552,7 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 
 		// convert
 		struct stat st = { 0 };
-		// st.st_dev = stat->fsid;
+		st.st_dev = stat->fsid;
 		st.st_ino = stat->fileid;
 		st.st_nlink = stat->nlink;
 		st.st_mode = stat->mode;
@@ -553,7 +564,7 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 		st.st_ctim = toTimeSpec(stat->ctime);
 
 		// fill
-		filler(buf, name, &st, 0, FUSE_FILL_DIR_PLUS);
+		filler(buf, name, &st, dOffset++, FUSE_FILL_DIR_PLUS);
 	}
 
 	free(inBuffer);
@@ -563,24 +574,27 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 
 static int xmp_mknod(const char* path, mode_t mode, dev_t rdev)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_mknod] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [mknod] on path %s\n", path);
 
 	return -ENOSYS;
 }
 
 static int xmp_mkdir(const char* path, mode_t mode)
 {
-	printf("Function call [xmp_mkdir] on path %s\n", path);
+	printf("Function call [mkdir] on path %s\n", path);
 
 	int ret;
 	char* inBuffer = NULL;
 	char* outBuffer = NULL;
 
 	ret = opMkdir(path, mode, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
@@ -597,17 +611,20 @@ static int xmp_mkdir(const char* path, mode_t mode)
 
 static int xmp_unlink(const char* path)
 {
-	printf("Function call [xmp_unlink] on path %s\n", path);
+	printf("Function call [unlink] on path %s\n", path);
 
 	int ret;
 	char* inBuffer = NULL;
 	char* outBuffer = NULL;
 
 	ret = opUnlink(path, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
@@ -624,17 +641,20 @@ static int xmp_unlink(const char* path)
 
 static int xmp_rmdir(const char* path)
 {
-	printf("Function call [xmp_rmdir] on path %s\n", path);
+	printf("Function call [rmdir] on path %s\n", path);
 
 	int ret;
 	char* inBuffer = NULL;
 	char* outBuffer = NULL;
 
 	ret = opRmdir(path, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
@@ -651,24 +671,27 @@ static int xmp_rmdir(const char* path)
 
 static int xmp_symlink(const char* from, const char* to)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_symlink] on path %s to %s\n", from, to);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [symlink] on path %s to %s\n", from, to);
 
 	return -ENOSYS;
 }
 
 static int xmp_rename(const char* from, const char* to, unsigned int flags)
 {
-	printf("Function call [xmp_rename] on path %s\n", from);
+	printf("Function call [rename] on path %s\n", from);
 
 	int ret;
 	char* inBuffer = NULL;
 	char* outBuffer = NULL;
 
 	ret = opRename(from, to, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
@@ -685,7 +708,7 @@ static int xmp_rename(const char* from, const char* to, unsigned int flags)
 
 static int xmp_link(const char* from, const char* to)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_link] on path %s to %s\n", from, to);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [link] on path %s to %s\n", from, to);
 
 	return -ENOSYS;
 }
@@ -693,7 +716,7 @@ static int xmp_link(const char* from, const char* to)
 static int xmp_chmod(const char* path, mode_t mode,
 	struct fuse_file_info* fi)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_chmod] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [chmod] on path %s\n", path);
 
 	return -ENOSYS;
 }
@@ -701,7 +724,7 @@ static int xmp_chmod(const char* path, mode_t mode,
 static int xmp_chown(const char* path, uid_t uid, gid_t gid,
 	struct fuse_file_info* fi)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_chown] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [chown] on path %s\n", path);
 
 	return -ENOSYS;
 }
@@ -709,7 +732,7 @@ static int xmp_chown(const char* path, uid_t uid, gid_t gid,
 static int xmp_truncate(const char* path, off_t offset,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_truncate] on path %s\n", path);
+	printf("Function call [truncate] on path %s\n", path);
 
 	(void)fi;
 
@@ -718,10 +741,13 @@ static int xmp_truncate(const char* path, off_t offset,
 	char* outBuffer = NULL;
 
 	ret = opTruncate(path, offset, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	int iOffset = sizeof(uint64);
 	short* status = (short*)(inBuffer + iOffset);
@@ -740,7 +766,7 @@ static int xmp_truncate(const char* path, off_t offset,
 static int xmp_create(const char* path, mode_t mode,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_create] on path %s\n", path);
+	printf("Function call [create] on path %s\n", path);
 
 	(void)fi;
 
@@ -749,10 +775,13 @@ static int xmp_create(const char* path, mode_t mode,
 	char* outBuffer = NULL;
 
 	ret = opCreate(path, mode, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
@@ -769,7 +798,7 @@ static int xmp_create(const char* path, mode_t mode,
 
 static int xmp_open(const char* path, struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_open] on path %s\n", path);
+	printf("Function call [open] on path %s\n", path);
 
 	(void)fi;
 
@@ -779,7 +808,7 @@ static int xmp_open(const char* path, struct fuse_file_info* fi)
 static int xmp_read(const char* path, char* buf, size_t size, off_t offset,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_read] on path %s\n", path);
+	printf("Function call [read] on path %s\n", path);
 
 	(void)fi;
 
@@ -788,10 +817,13 @@ static int xmp_read(const char* path, char* buf, size_t size, off_t offset,
 	char* outBuffer = NULL;
 
 	ret = opRead(path, size, offset, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	int iOffset = sizeof(uint64);
 	short* status = (short*)(inBuffer + iOffset);
@@ -817,7 +849,7 @@ static int xmp_read(const char* path, char* buf, size_t size, off_t offset,
 static int xmp_write(const char* path, const char* buf, size_t size,
 	off_t offset, struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_write] on path %s\n", path);
+	printf("Function call [write] on path %s\n", path);
 
 	(void)fi;
 
@@ -826,10 +858,13 @@ static int xmp_write(const char* path, const char* buf, size_t size,
 	char* outBuffer = NULL;
 
 	ret = opWrite(path, size, offset, buf, &outBuffer);
-	ret = sendMessage(sServer, outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
 	free(outBuffer);
 
-	ret = readMessage(sServer, &inBuffer);
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
 
 	int iOffset = sizeof(uint64);
 	short* status = (short*)(inBuffer + iOffset);
@@ -851,14 +886,14 @@ static int xmp_write(const char* path, const char* buf, size_t size,
 
 static int xmp_statfs(const char* path, struct statvfs* stbuf)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_statfs] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [statfs] on path %s\n", path);
 
 	return -ENOSYS;
 }
 
 static int xmp_release(const char* path, struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_release] on path %s\n", path);
+	printf("Function call [release] on path %s\n", path);
 	(void)path;
 	(void)fi;
 	return 0;
@@ -867,7 +902,7 @@ static int xmp_release(const char* path, struct fuse_file_info* fi)
 static int xmp_fsync(const char* path, int isdatasync,
 	struct fuse_file_info* fi)
 {
-	printf("Function call [xmp_fsync] on path %s\n", path);
+	printf("Function call [fsync] on path %s\n", path);
 	/* Just a stub.	 This method is optional and can safely be left
 	   unimplemented */
 
@@ -879,7 +914,7 @@ static int xmp_fsync(const char* path, int isdatasync,
 
 static off_t xmp_lseek(const char* path, off_t off, int whence, struct fuse_file_info* fi)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [xmp_lseek] on path %s\n", path);
+	fprintf(stderr, "UNIMPLEMENTED: Function call [lseek] on path %s\n", path);
 
 	return -ENOSYS;
 }

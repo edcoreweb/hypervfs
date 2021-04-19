@@ -706,23 +706,27 @@ int main(void)
     ret = bind(sServer, (struct sockaddr*)&addr, sizeof addr);
     Log(ret, "bind");
 
-    ret = listen(sServer, 1);
+    ret = listen(sServer, SOCKET_NUM);
     Log(ret, "listen");
 
-    SOCKET sClients[SOCKET_NUM];
-    HANDLE threads[SOCKET_NUM];
+    SOCKET sClients[SOCKET_NUM] = { 0 };
+    HANDLE threads[SOCKET_NUM] = { 0 };
 
+    accept:
     for (int i = 0; i < SOCKET_NUM; i++) {
         sClients[i] = accept(sServer, NULL, NULL);
         Log(sClients[i], "client socket", 0);
-        threads[i] = CreateThread(NULL, 0, handleOp, (void*) sClients[i], 0, NULL);
+        threads[i] = CreateThread(NULL, 0, handleOp, (void*) &sClients[i], 0, NULL);
     }
 
     WaitForMultipleObjects(SOCKET_NUM, threads, true, INFINITE);
 
     for (int i = 0; i < SOCKET_NUM; i++) {
         CloseHandle(threads[i]);
+        closesocket(sClients[i]);
     }
+
+    goto accept;
 
     closesocket(sServer);
     WSACleanup();
