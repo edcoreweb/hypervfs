@@ -723,7 +723,7 @@ int main(void)
 
     for (int i = 0; i < SOCKET_NUM; i++) {
         CloseHandle(threads[i]);
-        closesocket(sClients[i]);
+        Log(closesocket(sClients[i]), "client socket closed");
     }
 
     goto accept;
