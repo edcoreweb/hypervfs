@@ -65,6 +65,12 @@ enum
 	HYPERV_RENAME = 100
 };
 
+struct xmp_dirp {
+	void* entry;
+	uint64 readSize;
+	int64 offset;
+};
+
 int sSockets[SOCKET_NUM] = { 0 };
 pthread_mutex_t sSocketLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t sSocketCond = PTHREAD_COND_INITIALIZER;
@@ -333,39 +339,39 @@ int aquireSocket()
 {
 	pthread_mutex_lock(&sSocketLock);
 
-	int socket = 0;
+	// 	int socket = 0;
 
-aquire:
-	for (int i = 0; i < SOCKET_NUM; i++) {
-		if (sSockets[i]) {
-			socket = sSockets[i];
-			sSockets[i] = 0;
-		}
-	}
+	// aquire:
+	// 	for (int i = 0; i < SOCKET_NUM; i++) {
+	// 		if (sSockets[i]) {
+	// 			socket = sSockets[i];
+	// 			sSockets[i] = 0;
+	// 		}
+	// 	}
 
-	if (!socket) {
-		pthread_cond_wait(&sSocketCond, &sSocketLock);
-		goto aquire;
-	}
+	// 	if (!socket) {
+	// 		pthread_cond_wait(&sSocketCond, &sSocketLock);
+	// 		goto aquire;
+	// 	}
 
 
-	pthread_mutex_unlock(&sSocketLock);
+	// 	pthread_mutex_unlock(&sSocketLock);
 
-	return socket;
+	return sSockets[0];
 }
 
 void releaseSocket(int socket)
 {
-	pthread_mutex_lock(&sSocketLock);
+	// pthread_mutex_lock(&sSocketLock);
 
-	// find first empty position
-	for (int i = 0; i < SOCKET_NUM; i++) {
-		if (!sSockets[i]) {
-			sSockets[i] = socket;
-		}
-	}
+	// // find first empty position
+	// for (int i = 0; i < SOCKET_NUM; i++) {
+	// 	if (!sSockets[i]) {
+	// 		sSockets[i] = socket;
+	// 	}
+	// }
 
-	pthread_cond_signal(&sSocketCond);
+	// pthread_cond_signal(&sSocketCond);
 
 	pthread_mutex_unlock(&sSocketLock);
 }
@@ -430,9 +436,9 @@ static void* xmp_init(struct fuse_conn_info* conn,
 	   the cache of the associated inode - resulting in an
 	   incorrect st_nlink value being reported for any remaining
 	   hardlinks to this inode. */
-	   // cfg->entry_timeout = 0;
-	   // cfg->attr_timeout = 0;
-	   // cfg->negative_timeout = 0;
+	   // cfg->entry_timeout = 500;
+	   // cfg->attr_timeout = 500;
+	   // cfg->negative_timeout = 500;
 
 	opConnect();
 
@@ -498,22 +504,45 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 	return -ENOSYS;
 }
 
+static int xmp_opendir(const char* path, struct fuse_file_info* fi)
+{
+	int res;
+	struct xmp_dirp* d = malloc(sizeof(struct xmp_dirp));
+
+	if (d == NULL) {
+		return -ENOMEM;
+	}
+
+	d->entry = NULL;
+	d->offset = 0;
+	d->readSize = 0;
+
+	fi->fh = (uint64)d;
+	return 0;
+}
+
 static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	off_t offset, struct fuse_file_info* fi,
 	enum fuse_readdir_flags flags)
 {
 	printf("Function call [readdir] on path %s\n", path);
 
-	if (offset > 0) {
-		return 0;
-	}
-
-	(void)offset;
-	(void)fi;
 	(void)flags;
 
-	int ret;
 	char* inBuffer = NULL;
+	int64 dOffset = 1;
+	uint64 readSize = sizeof(uint64) + sizeof(short);
+	struct xmp_dirp* d = (struct xmp_dirp*)fi->fh;
+
+	// if we have a offset, we don't need to fetch again
+	if (d->offset) {
+		dOffset = d->offset;
+		inBuffer = (char*)d->entry;
+		readSize = d->readSize;
+		goto fill;
+	}
+
+	int ret;
 	char* outBuffer = NULL;
 
 	ret = opReadDir(path, &outBuffer);
@@ -525,7 +554,6 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	ret = readMessage(socket, &inBuffer);
 	releaseSocket(socket);
 
-	uint64* size = (uint64*)inBuffer;
 	short* status = (short*)(inBuffer + sizeof(uint64));
 
 	if (*status != HYPERV_OK) {
@@ -534,8 +562,8 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 		return -ENOENT;
 	}
 
-	uint64 readSize = sizeof(uint64) + sizeof(short);
-	int64 dOffset = 1;
+fill:;
+	uint64* size = (uint64*)inBuffer;
 
 	while (*size > readSize) {
 		// we also have the name size, but names are NULL terminated
@@ -563,12 +591,26 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 		st.st_mtim = toTimeSpec(stat->mtime);
 		st.st_ctim = toTimeSpec(stat->ctime);
 
-		// fill
-		filler(buf, name, &st, dOffset++, FUSE_FILL_DIR_PLUS);
+		if (filler(buf, name, &st, dOffset++, FUSE_FILL_DIR_PLUS)) {
+			// buffer is full
+			break;
+		}
 	}
 
-	free(inBuffer);
+	// save the offset and hope we don't have a memory leak
+	d->entry = (void*)inBuffer;
+	d->readSize = readSize;
+	d->offset = dOffset;
 
+	return 0;
+}
+
+static int xmp_releasedir(const char* path, struct fuse_file_info* fi)
+{
+	struct xmp_dirp* d = (struct xmp_dirp*)fi->fh;
+	(void)path;
+	free(d->entry);
+	free(d);
 	return 0;
 }
 
@@ -924,7 +966,9 @@ static const struct fuse_operations xmp_oper = {
 	.getattr = xmp_getattr,
 	.access = xmp_access,
 	.readlink = xmp_readlink,
+	.opendir = xmp_opendir,
 	.readdir = xmp_readdir,
+	.releasedir = xmp_releasedir,
 	.mknod = xmp_mknod,
 	.mkdir = xmp_mkdir,
 	.symlink = xmp_symlink,
