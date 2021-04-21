@@ -5,7 +5,7 @@
  *
  */
 
-#define FUSE_USE_VERSION 31
+#define FUSE_USE_VERSION 34
 #define _GNU_SOURCE
 
 #include <fuse.h>
@@ -62,7 +62,8 @@ enum
 	HYPERV_TRUNCATE = 70,
 	HYPERV_MKDIR = 80,
 	HYPERV_RMDIR = 90,
-	HYPERV_RENAME = 100
+	HYPERV_RENAME = 100,
+	HYPERV_SYMLINK = 110
 };
 
 struct xmp_dirp {
@@ -331,6 +332,38 @@ int opRename(const char* from, const char* to, char** outBuffer)
 
 	offset += sizeof(short);
 	memcpy(*outBuffer + offset, to, toLength);
+
+	return size;
+}
+
+int opSymlink(const char* from, const char* to, short ext, char** outBuffer)
+{
+	short opCode = HYPERV_SYMLINK;
+	short fromLength = strlen(from) + 1;
+	short toLength = strlen(to) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + fromLength + sizeof(short) + toLength + sizeof(short);
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &fromLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, from, fromLength);
+
+	offset += fromLength;
+	memcpy(*outBuffer + offset, &toLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, to, toLength);
+
+	offset += toLength;
+	memcpy(*outBuffer + offset, &ext, sizeof(short));
 
 	return size;
 }
@@ -713,9 +746,45 @@ static int xmp_rmdir(const char* path)
 
 static int xmp_symlink(const char* from, const char* to)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [symlink] on path %s to %s\n", from, to);
+	printf("Function call [symlink] on path %s to %s\n", from, to);
 
-	return -ENOSYS;
+	char* mountpoint = *((char**)fuse_get_session(fuse_get_context()->fuse));
+
+	short ext = 1;
+	int mountLen = strlen(mountpoint);
+
+	// we need to determine if we are linking to a external path or not
+	if (strncmp(mountpoint, from, mountLen) == 0) {
+		ext = 0;
+	}
+
+	int offset = ext ? 0 : mountLen;
+	fprintf(stderr, "UNIMPLEMENTED: Mounted on %s, real target is %s\n", mountpoint, from + offset);
+
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opSymlink(from + offset, to, ext, &outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
+
+	short* status = (short*)(inBuffer + sizeof(uint64));
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		// TODO: real error handling
+		return -ENOENT;
+	}
+
+	free(inBuffer);
+
+	return 0;
 }
 
 static int xmp_rename(const char* from, const char* to, unsigned int flags)

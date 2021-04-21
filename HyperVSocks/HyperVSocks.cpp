@@ -25,7 +25,7 @@
 #define S_IFREG	0100000 /* Regular file.  */
 #define S_IFLNK	0120000 /* Symbolic link.  */
 
-#define ROOT "H:\\WORK\\vhosts-cifs\\load-test"
+#define ROOT "D:\\vhosts\\kabel"
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -63,7 +63,8 @@ enum
     HYPERV_TRUNCATE = 70,
     HYPERV_MKDIR = 80,
     HYPERV_RMDIR = 90,
-    HYPERV_RENAME = 100
+    HYPERV_RENAME = 100,
+    HYPERV_SYMLINK = 110
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -578,6 +579,42 @@ int opRename(char* inBuffer, char** outBuffer)
     return opOk(outBuffer);
 }
 
+int opSymlink(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* fromLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* from = inBuffer + offset;
+
+    offset += *fromLength;
+    short* toLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* to = inBuffer + offset;
+
+    offset += *toLength;
+    short* ext = (short*)(inBuffer + offset);
+
+    if (*ext) {
+        // TODO: this should not be a error case
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    char* fromPath = makeCleanPath(ROOT, from);
+    char* toPath = makeCleanPath(ROOT, to);
+
+    int success = CreateSymbolicLink(toPath, fromPath, 0);
+    free(fromPath);
+    free(toPath);
+
+    if (!success) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    return opOk(outBuffer);
+}
+
 int readMessage(int socket, char** buffer)
 {
     uint64 size = 0;
@@ -649,6 +686,8 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opRmdir(inBuffer, outBuffer);
     case HYPERV_RENAME:
         return opRename(inBuffer, outBuffer);
+    case HYPERV_SYMLINK:
+        return opSymlink(inBuffer, outBuffer);
     default:
         return opError(HYPERV_NOENT, outBuffer);
     }
