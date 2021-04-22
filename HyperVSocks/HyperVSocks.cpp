@@ -95,51 +95,66 @@ uint32 fileTimeToUnix(FILETIME ft)
     return (uint32)(ticks / TICKS_PER_SECOND - EPOCH_DIFFERENCE);
 }
 
-HyperVStat* getPathAttr(const char *path)
+int getPathAttr(const char *path, HyperVStat** stat)
 {
-    HyperVStat* stat = (HyperVStat*) calloc(1, sizeof(HyperVStat));
-
     uint32 fileAttr = GetFileAttributes(path);
-    // TODO: check for errors
+
+    if (fileAttr == INVALID_FILE_ATTRIBUTES) {
+        return HYPERV_NOENT;
+    }
     
+    uint32 type;
+    uint32 mode;
     uint32 dwFlagsAndAttributes = 0;
 
-    if (fileAttr & FILE_ATTRIBUTE_DIRECTORY) {
-        stat->type = 0;
-        stat->mode = S_IFDIR | 0755;
-        dwFlagsAndAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_FLAG_BACKUP_SEMANTICS;
-    }
-    else if (fileAttr & FILE_ATTRIBUTE_REPARSE_POINT) {
-        stat->type = 2;
-        stat->mode = S_IFLNK | 0644;
+    
+    if (fileAttr & FILE_ATTRIBUTE_REPARSE_POINT) {
+        type = 2;
+        mode = S_IFLNK | 0644;
         dwFlagsAndAttributes = FILE_ATTRIBUTE_REPARSE_POINT | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS;
+    } else if (fileAttr & FILE_ATTRIBUTE_DIRECTORY) {
+        type = 0;
+        mode = S_IFDIR | 0755;
+        dwFlagsAndAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_FLAG_BACKUP_SEMANTICS;
     } else {
-        stat->type = 1;
-        stat->mode = S_IFREG | 0644;
+        type = 1;
+        mode = S_IFREG | 0644;
         dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
     }
 
     HANDLE hFile = CreateFile(path, FILE_READ_EA, FILE_SHARE_READ, NULL, OPEN_EXISTING, dwFlagsAndAttributes, NULL);
 
     if (hFile == INVALID_HANDLE_VALUE) {
-        free(stat);
-        return NULL;
+        return HYPERV_NOENT;
     }
 
     BY_HANDLE_FILE_INFORMATION lpFileInformation;
     GetFileInformationByHandle(hFile, &lpFileInformation);
     CloseHandle(hFile);
 
-    stat->fsid = (uint64)lpFileInformation.dwVolumeSerialNumber;
-    stat->fileid = makeLong(lpFileInformation.nFileIndexHigh, lpFileInformation.nFileIndexLow);
-    stat->size = makeLong(lpFileInformation.nFileSizeHigh, lpFileInformation.nFileSizeLow);
-    stat->used = stat->size;
-    stat->nlink = lpFileInformation.nNumberOfLinks;
-    stat->atime = fileTimeToUnix(lpFileInformation.ftLastAccessTime);
-    stat->mtime = fileTimeToUnix(lpFileInformation.ftLastWriteTime);
-    stat->ctime = fileTimeToUnix(lpFileInformation.ftCreationTime);
+    uint64 size = makeLong(lpFileInformation.nFileSizeHigh, lpFileInformation.nFileSizeLow);
 
-    return stat;
+    // external symlinks don't have a size, but linux uses the size to allocate
+    // the buffer for readlink, so we can set a sane default
+    // to limit the number of trips readlink does
+    if (type == 2 && !size) {
+        size = 4096;
+    }
+
+    *stat = (HyperVStat*) calloc(1, sizeof(HyperVStat));
+
+    (*stat)->mode = mode;
+    (*stat)->type = type;
+    (*stat)->fsid = (uint64)lpFileInformation.dwVolumeSerialNumber;
+    (*stat)->fileid = makeLong(lpFileInformation.nFileIndexHigh, lpFileInformation.nFileIndexLow);
+    (*stat)->size = size;
+    (*stat)->used = (*stat)->size;
+    (*stat)->nlink = lpFileInformation.nNumberOfLinks;
+    (*stat)->atime = fileTimeToUnix(lpFileInformation.ftLastAccessTime);
+    (*stat)->mtime = fileTimeToUnix(lpFileInformation.ftLastWriteTime);
+    (*stat)->ctime = fileTimeToUnix(lpFileInformation.ftCreationTime);
+
+    return 0;
 }
 
 char* makeRemotePath(const char* path, const char* name)
@@ -262,12 +277,12 @@ int opReadAttr(char* inBuffer, char** outBuffer)
 
     // prefix the path
     char* filePath = makeLocalPath(ROOT, path);
-    HyperVStat* stat = getPathAttr(filePath);
-
+    HyperVStat* stat = NULL; 
+    int err = getPathAttr(filePath, &stat);
     free(filePath);
 
-    if (!stat) {
-        return opError(HYPERV_NOENT, outBuffer);
+    if (err) {
+        return opError(err, outBuffer);
     }
 
     int status = HYPERV_OK;
@@ -316,10 +331,11 @@ int opReadDir(char* inBuffer, char** outBuffer)
     do {
         // get file stat
         char* filePath = makePath(dirPath, fileinfo.cFileName);
-        HyperVStat* stat = getPathAttr(filePath);
+        HyperVStat* stat = NULL;
+        int err = getPathAttr(filePath, &stat);
         free(filePath);
 
-        if (!stat) {
+        if (err) {
             continue;
         }
 
