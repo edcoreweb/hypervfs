@@ -28,7 +28,7 @@
 #define S_IFREG	0100000 /* Regular file.  */
 #define S_IFLNK	0120000 /* Symbolic link.  */
 
-#define ROOT "D:\\vhosts\\kabel"
+#define ROOT "H:\\WORK\\vhosts\\kabel"
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -708,7 +708,8 @@ int opReadlink(char* inBuffer, char** outBuffer)
     }
 
     int status = HYPERV_OK;
-    uint64 size = sizeof(uint64) + sizeof(short) + +sizeof(short) + sizeof(short) + targetLen;
+    targetLen = strlen(targetPath) + 1;
+    uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + sizeof(short) + targetLen;
     *outBuffer = (char*) malloc(size);
 
     offset = 0;

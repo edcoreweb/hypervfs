@@ -575,7 +575,7 @@ static int xmp_access(const char* path, int mask)
 
 static int xmp_readlink(const char* path, char* buf, size_t size)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [readlink] on path %s\n", path);
+	printf("Function call [readlink] on path %s\n", path);
 
 	int ret;
 	char* inBuffer = NULL;
@@ -602,13 +602,12 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 	offset += sizeof(short);
 	short* ext = (short*)(inBuffer + offset);
 
-	offset += sizeof(short);
-	short* len = (short*)(inBuffer + offset);
+	offset += sizeof(short) + sizeof(short);
+	char* lPath = (char*)(inBuffer + offset);
+	char* linkPath = !*ext ? makeLocalPath(mountPath(), lPath) : strdup(lPath);
+	int len = strlen(linkPath) + 1;
 
-	offset += sizeof(short);
-	char* linkPath = makeLocalPath(mountPath(), (char*)(inBuffer + offset));
-
-	int bufSize = size > *len ? *len : size;
+	int bufSize = size > len ? len : size;
 	memcpy(buf, linkPath, bufSize);
 	buf[bufSize - 1] = '\0';
 
@@ -840,7 +839,6 @@ static int xmp_symlink(const char* from, const char* to)
 	}
 
 	int offset = ext ? 0 : mountLen;
-	fprintf(stderr, "UNIMPLEMENTED: Mounted on %s, real target is %s\n", mountpoint, from + offset);
 
 	int ret;
 	char* inBuffer = NULL;
