@@ -8,6 +8,9 @@
 #include <stdint.h>
 #include <combaseapi.h>
 #include <windows.h>
+#include <winioctl.h>
+#include <comdef.h>
+#include "windep.h"
 
 // link with Ws2_32.lib
 #pragma comment(lib, "Ws2_32.lib")
@@ -51,7 +54,8 @@ typedef struct
 enum
 {
     HYPERV_OK = 0,
-    HYPERV_NOENT = 1,
+    HYPERV_NOENT = ENOENT,
+    HYPERV_EXIST = EEXIST,
 
     // op codes
     HYPERV_ATTR = 10,
@@ -64,7 +68,8 @@ enum
     HYPERV_MKDIR = 80,
     HYPERV_RMDIR = 90,
     HYPERV_RENAME = 100,
-    HYPERV_SYMLINK = 110
+    HYPERV_SYMLINK = 110,
+    HYPERV_READLINK = 120
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -104,7 +109,11 @@ HyperVStat* getPathAttr(const char *path)
         stat->mode = S_IFDIR | 0755;
         dwFlagsAndAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_FLAG_BACKUP_SEMANTICS;
     }
-    else {
+    else if (fileAttr & FILE_ATTRIBUTE_REPARSE_POINT) {
+        stat->type = 2;
+        stat->mode = S_IFLNK | 0644;
+        dwFlagsAndAttributes = FILE_ATTRIBUTE_REPARSE_POINT | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS;
+    } else {
         stat->type = 1;
         stat->mode = S_IFREG | 0644;
         dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
@@ -131,6 +140,34 @@ HyperVStat* getPathAttr(const char *path)
     stat->ctime = fileTimeToUnix(lpFileInformation.ftCreationTime);
 
     return stat;
+}
+
+char* makeRemotePath(const char* path, const char* name)
+{
+    // find the start pos
+    const char* start = strstr(name, path);
+    int offset = 0;
+    int next = 0;
+
+    if (start) {
+        offset = strlen(path);
+    }
+
+    char* filePath = (char*) calloc(1, strlen(name) - offset + 1);
+
+    for (int i = offset; i < strlen(name) + 1; i++)
+    {
+        // find "\\" and replace them with "/"
+        if (name[i] == '\\')
+        {
+            filePath[next++] = '/';
+            continue;
+        }
+
+        filePath[next++] = name[i];
+    }
+
+    return filePath;
 }
 
 char* cleanPath(const char* name)
@@ -180,7 +217,7 @@ char* makePath(const char* path, const char* name)
     return filePath;
 }
 
-char* makeCleanPath(const char* path, const char* name)
+char* makeLocalPath(const char* path, const char* name)
 {
     char* cleaned = cleanPath(name);
 
@@ -224,7 +261,7 @@ int opReadAttr(char* inBuffer, char** outBuffer)
     char* path = inBuffer + offset;
 
     // prefix the path
-    char* filePath = makeCleanPath(ROOT, path);
+    char* filePath = makeLocalPath(ROOT, path);
     HyperVStat* stat = getPathAttr(filePath);
 
     free(filePath);
@@ -252,7 +289,7 @@ int opReadDir(char* inBuffer, char** outBuffer)
     char* path = inBuffer + offset;
 
     // prefix the path
-    char* dirPath = makeCleanPath(ROOT, path);
+    char* dirPath = makeLocalPath(ROOT, path);
 
     char *findPath = (char*) calloc(1, strlen(dirPath) + 3 + 1);
     strcpy(findPath, dirPath);
@@ -335,7 +372,7 @@ int opRead(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     HANDLE hFile = CreateFile(fPath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     free(fPath);
@@ -396,7 +433,7 @@ int opCreate(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     HANDLE hFile = CreateFile(fPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     free(fPath);
@@ -417,7 +454,7 @@ int opWrite(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     HANDLE hFile = CreateFile(fPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     free(fPath);
@@ -471,7 +508,7 @@ int opUnlink(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     int success = DeleteFile(fPath);
     free(fPath);
@@ -490,7 +527,7 @@ int opTruncate(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     HANDLE hFile = CreateFile(fPath, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     free(fPath);
@@ -523,7 +560,7 @@ int opMkdir(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     int success = CreateDirectory(fPath, NULL);
     free(fPath);
@@ -542,7 +579,7 @@ int opRmdir(char* inBuffer, char** outBuffer)
 
     offset += sizeof(short);
     char* path = inBuffer + offset;
-    char* fPath = makeCleanPath(ROOT, path);
+    char* fPath = makeLocalPath(ROOT, path);
 
     int success = RemoveDirectory(fPath);
     free(fPath);
@@ -565,8 +602,8 @@ int opRename(char* inBuffer, char** outBuffer)
     offset += *pathLength + sizeof(short);
     char* to = inBuffer + offset;
 
-    char* fromPath = makeCleanPath(ROOT, from);
-    char* toPath = makeCleanPath(ROOT, to);
+    char* fromPath = makeLocalPath(ROOT, from);
+    char* toPath = makeLocalPath(ROOT, to);
 
     int success = MoveFile(fromPath, toPath);
     free(fromPath);
@@ -596,15 +633,28 @@ int opSymlink(char* inBuffer, char** outBuffer)
     offset += *toLength;
     short* ext = (short*)(inBuffer + offset);
 
-    if (*ext) {
-        // TODO: this should not be a error case
-        return opError(HYPERV_NOENT, outBuffer);
+    char* toPath = makeLocalPath(ROOT, to);
+    uint32 toAttr = GetFileAttributes(toPath);
+
+    // ensure symlink does not exist already
+    if (toAttr != INVALID_FILE_ATTRIBUTES) {
+        free(toPath);
+        return opError(HYPERV_EXIST, outBuffer);
     }
 
-    char* fromPath = makeCleanPath(ROOT, from);
-    char* toPath = makeCleanPath(ROOT, to);
+    // external path save as is, local path transform
+    char* fromPath = *ext ? _strdup(from) : makeLocalPath(ROOT, from);
+    uint32 fromAttr = GetFileAttributes(fromPath);
 
-    int success = CreateSymbolicLink(toPath, fromPath, 0);
+    // if local path, ensure it exists
+    if (!*ext && fromAttr == INVALID_FILE_ATTRIBUTES) {
+        free(fromPath);
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+    
+    uint32 linkFlags = !*ext && (fromAttr & FILE_ATTRIBUTE_DIRECTORY) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
+    int success = CreateSymbolicLink(toPath, fromPath, linkFlags);
+
     free(fromPath);
     free(toPath);
 
@@ -613,6 +663,72 @@ int opSymlink(char* inBuffer, char** outBuffer)
     }
 
     return opOk(outBuffer);
+}
+
+int opReadlink(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* path = inBuffer + offset;
+    
+    char* linkPath = makeLocalPath(ROOT, path);
+    uint32 dwFlagsAndAttributes = FILE_ATTRIBUTE_REPARSE_POINT | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS;
+    HANDLE hFile = CreateFile(linkPath, FILE_READ_EA, FILE_SHARE_READ, NULL, OPEN_EXISTING, dwFlagsAndAttributes, NULL);
+    free(linkPath);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    // bacause windows always complicates things
+    DWORD bytesReturned;
+    REPARSE_DATA_BUFFER* lpOutBuffer = (REPARSE_DATA_BUFFER*) malloc(MAXIMUM_REPARSE_DATA_BUFFER_SIZE);
+    DeviceIoControl(hFile, FSCTL_GET_REPARSE_POINT, NULL, 0, lpOutBuffer, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, &bytesReturned, NULL);
+    CloseHandle(hFile);
+
+    if (lpOutBuffer->ReparseTag != IO_REPARSE_TAG_SYMLINK) {
+        free(lpOutBuffer);
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    short targetLen = lpOutBuffer->SymbolicLinkReparseBuffer.PrintNameLength / sizeof(WCHAR);
+    char* targetPath = (char*) calloc(1, targetLen + 1);
+    wcstombs(targetPath, lpOutBuffer->SymbolicLinkReparseBuffer.PathBuffer, targetLen);
+    free(lpOutBuffer);
+
+    // extern paths are not translated
+    short ext = targetPath[0] == '/';
+
+    if (!ext) {
+        char* remotePath = makeRemotePath(ROOT, targetPath);
+        free(targetPath);
+        targetPath = remotePath;
+    }
+
+    int status = HYPERV_OK;
+    uint64 size = sizeof(uint64) + sizeof(short) + +sizeof(short) + sizeof(short) + targetLen;
+    *outBuffer = (char*) malloc(size);
+
+    offset = 0;
+    memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+    offset += sizeof(uint64);
+    memcpy(*outBuffer + offset, &status, sizeof(short));
+
+    offset += sizeof(short);
+    memcpy(*outBuffer + offset, &ext, sizeof(short));
+
+    offset += sizeof(short);
+    memcpy(*outBuffer + offset, &targetLen, sizeof(short));
+
+    offset += sizeof(short);
+    memcpy(*outBuffer + offset, targetPath, targetLen);
+
+    free(targetPath);
+
+    return size;
 }
 
 int readMessage(int socket, char** buffer)
@@ -688,6 +804,8 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opRename(inBuffer, outBuffer);
     case HYPERV_SYMLINK:
         return opSymlink(inBuffer, outBuffer);
+    case HYPERV_READLINK:
+        return opReadlink(inBuffer, outBuffer);
     default:
         return opError(HYPERV_NOENT, outBuffer);
     }

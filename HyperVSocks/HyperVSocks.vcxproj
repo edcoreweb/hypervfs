@@ -146,6 +146,9 @@
     </ClCompile>
     <ClCompile Include="HyperVSocks.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="windep.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

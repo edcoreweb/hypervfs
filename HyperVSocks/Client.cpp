@@ -8,6 +8,9 @@
 #define FUSE_USE_VERSION 34
 #define _GNU_SOURCE
 
+#define PORT_NUM 5001
+#define SOCKET_NUM 4
+
 #include <fuse.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,11 +24,6 @@
 #include <sys/socket.h>
 #include <linux/vm_sockets.h>
 #include <pthread.h>
-
-
-#define PORT_NUM 5001
-#define BUFF_SIZE 512
-#define SOCKET_NUM 4
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -50,7 +48,8 @@ typedef struct
 enum
 {
 	HYPERV_OK = 0,
-	HYPERV_NOENT = 1,
+	HYPERV_NOENT = ENOENT,
+	HYPERV_EXIST = EEXIST,
 
 	// op codes
 	HYPERV_ATTR = 10,
@@ -63,7 +62,8 @@ enum
 	HYPERV_MKDIR = 80,
 	HYPERV_RMDIR = 90,
 	HYPERV_RENAME = 100,
-	HYPERV_SYMLINK = 110
+	HYPERV_SYMLINK = 110,
+	HYPERV_READLINK = 120
 };
 
 struct xmp_dirp {
@@ -368,6 +368,28 @@ int opSymlink(const char* from, const char* to, short ext, char** outBuffer)
 	return size;
 }
 
+int opReadlink(const char* path, char** outBuffer)
+{
+	short opCode = HYPERV_READLINK;
+	short pathLength = strlen(path) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
+	*outBuffer = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(*outBuffer + offset, path, pathLength);
+
+	return size;
+}
+
 int aquireSocket()
 {
 	pthread_mutex_lock(&sSocketLock);
@@ -391,6 +413,27 @@ int aquireSocket()
 	// 	pthread_mutex_unlock(&sSocketLock);
 
 	return sSockets[0];
+}
+
+char* mountPath()
+{
+	return *((char**)fuse_get_session(fuse_get_context()->fuse));
+}
+
+char* makeLocalPath(const char* path, const char* name)
+{
+	int len = strlen(name);
+	int size = len == 0 ? 1 : len + 1;
+
+	char* filePath = (char*)calloc(1, strlen(path) + size);
+
+	strcpy(filePath, path);
+
+	if (len) {
+		strcat(filePath, name);
+	}
+
+	return filePath;
 }
 
 void releaseSocket(int socket)
@@ -534,7 +577,45 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 {
 	fprintf(stderr, "UNIMPLEMENTED: Function call [readlink] on path %s\n", path);
 
-	return -ENOSYS;
+	int ret;
+	char* inBuffer = NULL;
+	char* outBuffer = NULL;
+
+	ret = opReadlink(path, &outBuffer);
+
+	int socket = aquireSocket();
+	ret = sendMessage(socket, outBuffer);
+	free(outBuffer);
+
+	ret = readMessage(socket, &inBuffer);
+	releaseSocket(socket);
+
+	int offset = sizeof(uint64);
+	short* status = (short*)(inBuffer + offset);
+
+	if (*status != HYPERV_OK) {
+		free(inBuffer);
+		return -*status;
+	}
+
+	// fill the buffer with the path
+	offset += sizeof(short);
+	short* ext = (short*)(inBuffer + offset);
+
+	offset += sizeof(short);
+	short* len = (short*)(inBuffer + offset);
+
+	offset += sizeof(short);
+	char* linkPath = makeLocalPath(mountPath(), (char*)(inBuffer + offset));
+
+	int bufSize = size > *len ? *len : size;
+	memcpy(buf, linkPath, bufSize);
+	buf[bufSize - 1] = '\0';
+
+	free(linkPath);
+	free(inBuffer);
+
+	return 0;
 }
 
 static int xmp_opendir(const char* path, struct fuse_file_info* fi)
@@ -748,7 +829,7 @@ static int xmp_symlink(const char* from, const char* to)
 {
 	printf("Function call [symlink] on path %s to %s\n", from, to);
 
-	char* mountpoint = *((char**)fuse_get_session(fuse_get_context()->fuse));
+	char* mountpoint = mountPath();
 
 	short ext = 1;
 	int mountLen = strlen(mountpoint);
@@ -778,8 +859,7 @@ static int xmp_symlink(const char* from, const char* to)
 
 	if (*status != HYPERV_OK) {
 		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+		return -*status;
 	}
 
 	free(inBuffer);
