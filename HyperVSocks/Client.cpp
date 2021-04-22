@@ -544,8 +544,7 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 
 	if (*status != HYPERV_OK) {
 		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+		return -*status;
 	}
 
 	HyperVStat* stat = (HyperVStat*)(inBuffer + sizeof(uint64) + sizeof(short));
@@ -844,6 +843,8 @@ static int xmp_symlink(const char* from, const char* to)
 	char* inBuffer = NULL;
 	char* outBuffer = NULL;
 
+	// TODO: maybe send the a flag if from is external
+	// if it is a dir
 	ret = opSymlink(from + offset, to, ext, &outBuffer);
 
 	int socket = aquireSocket();
