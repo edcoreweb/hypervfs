@@ -832,7 +832,9 @@ static int xmp_symlink(const char* from, const char* to)
 	short ext = 1;
 	int mountLen = strlen(mountpoint);
 
-	// we need to determine if we are linking to a external path or not
+	// TODO: this does not guarantee the path is in the 
+	// mountpoint, something more reliable needs to be used as
+	// realpath does not work for some reason
 	if (strncmp(mountpoint, from, mountLen) == 0) {
 		ext = 0;
 	}
@@ -843,8 +845,7 @@ static int xmp_symlink(const char* from, const char* to)
 	char* inBuffer = NULL;
 	char* outBuffer = NULL;
 
-	// TODO: maybe send the a flag if from is external
-	// if it is a dir
+	// TODO: maybe send the a flag if from is external if it is a dir
 	ret = opSymlink(from + offset, to, ext, &outBuffer);
 
 	int socket = aquireSocket();
