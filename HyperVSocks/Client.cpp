@@ -540,11 +540,11 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 	ret = readMessage(socket, &inBuffer);
 	releaseSocket(socket);
 
-	short* status = (short*)(inBuffer + sizeof(uint64));
+	short status = *(short*)(inBuffer + sizeof(uint64));
 
-	if (*status != HYPERV_OK) {
+	if (status != HYPERV_OK) {
 		free(inBuffer);
-		return -*status;
+		return -status;
 	}
 
 	HyperVStat* stat = (HyperVStat*)(inBuffer + sizeof(uint64) + sizeof(short));
@@ -590,11 +590,11 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 	releaseSocket(socket);
 
 	int offset = sizeof(uint64);
-	short* status = (short*)(inBuffer + offset);
+	short status = *(short*)(inBuffer + offset);
 
-	if (*status != HYPERV_OK) {
+	if (status != HYPERV_OK) {
 		free(inBuffer);
-		return -*status;
+		return -status;
 	}
 
 	// fill the buffer with the path
@@ -854,11 +854,11 @@ static int xmp_symlink(const char* from, const char* to)
 	ret = readMessage(socket, &inBuffer);
 	releaseSocket(socket);
 
-	short* status = (short*)(inBuffer + sizeof(uint64));
+	short status = *(short*)(inBuffer + sizeof(uint64));
 
-	if (*status != HYPERV_OK) {
+	if (status != HYPERV_OK) {
 		free(inBuffer);
-		return -*status;
+		return -status;
 	}
 
 	free(inBuffer);
