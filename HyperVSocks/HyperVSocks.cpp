@@ -69,7 +69,8 @@ enum
     HYPERV_RMDIR = 90,
     HYPERV_RENAME = 100,
     HYPERV_SYMLINK = 110,
-    HYPERV_READLINK = 120
+    HYPERV_LINK = 120,
+    HYPERV_READLINK = 130
 };
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
@@ -681,6 +682,31 @@ int opSymlink(char* inBuffer, char** outBuffer)
     return opOk(outBuffer);
 }
 
+int opLink(char* inBuffer, char** outBuffer)
+{
+    int offset = sizeof(uint64) + sizeof(short);
+    short* pathLength = (short*)(inBuffer + offset);
+
+    offset += sizeof(short);
+    char* from = inBuffer + offset;
+
+    offset += *pathLength + sizeof(short);
+    char* to = inBuffer + offset;
+
+    char* fromPath = makeLocalPath(ROOT, from);
+    char* toPath = makeLocalPath(ROOT, to);
+
+    int success = CreateHardLink(toPath, fromPath, NULL);
+    free(fromPath);
+    free(toPath);
+
+    if (!success) {
+        return opError(HYPERV_NOENT, outBuffer);
+    }
+
+    return opOk(outBuffer);
+}
+
 int opReadlink(char* inBuffer, char** outBuffer)
 {
     int offset = sizeof(uint64) + sizeof(short);
@@ -821,6 +847,8 @@ int processMessage(char* inBuffer, char** outBuffer)
         return opRename(inBuffer, outBuffer);
     case HYPERV_SYMLINK:
         return opSymlink(inBuffer, outBuffer);
+    case HYPERV_LINK:
+        return opLink(inBuffer, outBuffer);
     case HYPERV_READLINK:
         return opReadlink(inBuffer, outBuffer);
     default:

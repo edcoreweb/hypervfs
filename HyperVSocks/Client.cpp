@@ -63,7 +63,8 @@ enum
 	HYPERV_RMDIR = 90,
 	HYPERV_RENAME = 100,
 	HYPERV_SYMLINK = 110,
-	HYPERV_READLINK = 120
+	HYPERV_LINK = 120,
+	HYPERV_READLINK = 130
 };
 
 struct xmp_dirp {
@@ -364,6 +365,35 @@ char* opSymlink(const char* from, const char* to, short ext)
 
 	offset += toLength;
 	memcpy(request + offset, &ext, sizeof(short));
+
+	return request;
+}
+
+char* opLink(const char* from, const char* to)
+{
+	short opCode = HYPERV_LINK;
+	short fromLength = strlen(from) + 1;
+	short toLength = strlen(to) + 1;
+	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + fromLength + sizeof(short) + toLength;
+	char* request = (char*)malloc(size);
+
+	int offset = 0;
+	memcpy(request + offset, &size, sizeof(uint64));
+
+	offset += sizeof(uint64);
+	memcpy(request + offset, &opCode, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(request + offset, &fromLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(request + offset, from, fromLength);
+
+	offset += fromLength;
+	memcpy(request + offset, &toLength, sizeof(short));
+
+	offset += sizeof(short);
+	memcpy(request + offset, to, toLength);
 
 	return request;
 }
@@ -877,9 +907,22 @@ static int xmp_rename(const char* from, const char* to, unsigned int flags)
 
 static int xmp_link(const char* from, const char* to)
 {
-	fprintf(stderr, "UNIMPLEMENTED: Function call [link] on path %s to %s\n", from, to);
+	printf("Function call [link] on path %s to %s\n", from, to);
 
-	return -ENOSYS;
+	int err;
+
+	char* inBuffer = requestOp(
+		opLink(from, to),
+		&err
+	);
+
+	if (err) {
+		return -err;
+	}
+
+	free(inBuffer);
+
+	return 0;
 }
 
 static int xmp_chmod(const char* path, mode_t mode,
