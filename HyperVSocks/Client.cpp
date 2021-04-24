@@ -99,295 +99,295 @@ void opConnect()
 	}
 }
 
-int opReadAttr(const char* path, char** outBuffer)
+char* opReadAttr(const char* path)
 {
 	short opCode = HYPERV_ATTR;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
-	memcpy(*outBuffer, &size, sizeof(uint64));
-	memcpy(*outBuffer + sizeof(uint64), &opCode, sizeof(short));
-	memcpy(*outBuffer + sizeof(uint64) + sizeof(short), &pathLength, sizeof(short));
-	memcpy(*outBuffer + sizeof(uint64) + sizeof(short) + sizeof(short), path, pathLength);
+	memcpy(request, &size, sizeof(uint64));
+	memcpy(request + sizeof(uint64), &opCode, sizeof(short));
+	memcpy(request + sizeof(uint64) + sizeof(short), &pathLength, sizeof(short));
+	memcpy(request + sizeof(uint64) + sizeof(short) + sizeof(short), path, pathLength);
 
-	return size;
+	return request;
 }
 
-int opReadDir(const char* path, char** outBuffer)
+char* opReadDir(const char* path)
 {
 	short opCode = HYPERV_READDIR;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
-	memcpy(*outBuffer, &size, sizeof(uint64));
-	memcpy(*outBuffer + sizeof(uint64), &opCode, sizeof(short));
-	memcpy(*outBuffer + sizeof(uint64) + sizeof(short), &pathLength, sizeof(short));
-	memcpy(*outBuffer + sizeof(uint64) + sizeof(short) + sizeof(short), path, pathLength);
+	memcpy(request, &size, sizeof(uint64));
+	memcpy(request + sizeof(uint64), &opCode, sizeof(short));
+	memcpy(request + sizeof(uint64) + sizeof(short), &pathLength, sizeof(short));
+	memcpy(request + sizeof(uint64) + sizeof(short) + sizeof(short), path, pathLength);
 
-	return size;
+	return request;
 }
 
-int opRead(const char* path, uint64 rSize, int64 rOffset, char** outBuffer)
+char* opRead(const char* path, uint64 rSize, int64 rOffset)
 {
 	short opCode = HYPERV_READ;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint64) + sizeof(int64);
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
 	offset += pathLength;
-	memcpy(*outBuffer + offset, &rSize, sizeof(uint64));
+	memcpy(request + offset, &rSize, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &rOffset, sizeof(int64));
+	memcpy(request + offset, &rOffset, sizeof(int64));
 
-	return size;
+	return request;
 }
 
-int opCreate(const char* path, uint32 mode, char** outBuffer)
+char* opCreate(const char* path, uint32 mode)
 {
 	short opCode = HYPERV_CREATE;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint32);
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
 	offset += pathLength;
-	memcpy(*outBuffer + offset, &mode, sizeof(uint32));
+	memcpy(request + offset, &mode, sizeof(uint32));
 
-	return size;
+	return request;
 }
 
-int opWrite(const char* path, uint64 wSize, int64 wOffset, const char* buffer, char** outBuffer)
+char* opWrite(const char* path, uint64 wSize, int64 wOffset, const char* buffer)
 {
 	short opCode = HYPERV_WRITE;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint64) + sizeof(int64) + wSize;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
 	offset += pathLength;
-	memcpy(*outBuffer + offset, &wSize, sizeof(uint64));
+	memcpy(request + offset, &wSize, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &wOffset, sizeof(int64));
+	memcpy(request + offset, &wOffset, sizeof(int64));
 
 	offset += sizeof(int64);
-	memcpy(*outBuffer + offset, buffer, wSize);
+	memcpy(request + offset, buffer, wSize);
 
-	return size;
+	return request;
 }
 
-int opUnlink(const char* path, char** outBuffer)
+char* opUnlink(const char* path)
 {
 	short opCode = HYPERV_UNLINK;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
-	return size;
+	return request;
 }
 
-int opTruncate(const char* path, int64 tOffset, char** outBuffer)
+char* opTruncate(const char* path, int64 tOffset)
 {
 	short opCode = HYPERV_TRUNCATE;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(int64);
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
 	offset += pathLength;
-	memcpy(*outBuffer + offset, &tOffset, sizeof(int64));
+	memcpy(request + offset, &tOffset, sizeof(int64));
 
-	return size;
+	return request;
 }
 
-int opMkdir(const char* path, uint32 mode, char** outBuffer)
+char* opMkdir(const char* path, uint32 mode)
 {
 	short opCode = HYPERV_MKDIR;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength + sizeof(uint32);
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
 	offset += pathLength;
-	memcpy(*outBuffer + offset, &mode, sizeof(uint32));
+	memcpy(request + offset, &mode, sizeof(uint32));
 
-	return size;
+	return request;
 }
 
-int opRmdir(const char* path, char** outBuffer)
+char* opRmdir(const char* path)
 {
 	short opCode = HYPERV_RMDIR;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
-	return size;
+	return request;
 }
 
-int opRename(const char* from, const char* to, char** outBuffer)
+char* opRename(const char* from, const char* to)
 {
 	short opCode = HYPERV_RENAME;
 	short fromLength = strlen(from) + 1;
 	short toLength = strlen(to) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + fromLength + sizeof(short) + toLength;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &fromLength, sizeof(short));
+	memcpy(request + offset, &fromLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, from, fromLength);
+	memcpy(request + offset, from, fromLength);
 
 	offset += fromLength;
-	memcpy(*outBuffer + offset, &toLength, sizeof(short));
+	memcpy(request + offset, &toLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, to, toLength);
+	memcpy(request + offset, to, toLength);
 
-	return size;
+	return request;
 }
 
-int opSymlink(const char* from, const char* to, short ext, char** outBuffer)
+char* opSymlink(const char* from, const char* to, short ext)
 {
 	short opCode = HYPERV_SYMLINK;
 	short fromLength = strlen(from) + 1;
 	short toLength = strlen(to) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + fromLength + sizeof(short) + toLength + sizeof(short);
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &fromLength, sizeof(short));
+	memcpy(request + offset, &fromLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, from, fromLength);
+	memcpy(request + offset, from, fromLength);
 
 	offset += fromLength;
-	memcpy(*outBuffer + offset, &toLength, sizeof(short));
+	memcpy(request + offset, &toLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, to, toLength);
+	memcpy(request + offset, to, toLength);
 
 	offset += toLength;
-	memcpy(*outBuffer + offset, &ext, sizeof(short));
+	memcpy(request + offset, &ext, sizeof(short));
 
-	return size;
+	return request;
 }
 
-int opReadlink(const char* path, char** outBuffer)
+char* opReadlink(const char* path)
 {
 	short opCode = HYPERV_READLINK;
 	short pathLength = strlen(path) + 1;
 	uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLength;
-	*outBuffer = (char*)malloc(size);
+	char* request = (char*)malloc(size);
 
 	int offset = 0;
-	memcpy(*outBuffer + offset, &size, sizeof(uint64));
+	memcpy(request + offset, &size, sizeof(uint64));
 
 	offset += sizeof(uint64);
-	memcpy(*outBuffer + offset, &opCode, sizeof(short));
+	memcpy(request + offset, &opCode, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, &pathLength, sizeof(short));
+	memcpy(request + offset, &pathLength, sizeof(short));
 
 	offset += sizeof(short);
-	memcpy(*outBuffer + offset, path, pathLength);
+	memcpy(request + offset, path, pathLength);
 
-	return size;
+	return request;
 }
 
 int aquireSocket()
@@ -434,6 +434,40 @@ char* makeLocalPath(const char* path, const char* name)
 	}
 
 	return filePath;
+}
+
+int relativeToMountpoint(const char* mountpoint, const char* path)
+{
+	int mountLen = strlen(mountpoint);
+
+	// does not start with the mountpoint
+	if (strncmp(mountpoint, path, mountLen) != 0) {
+		return 0;
+	}
+
+	const char* start = path + mountLen;
+	const char* end = start;
+
+	while (*end)
+	{
+		// find next segment
+		while (*end && *end != '/') {
+			++end;
+		}
+
+		// check for . or ..
+		if (end - start == 2 && start[1] == '.') {
+			return 0;
+		}
+
+		if (end - start == 3 && start[1] == '.' && start[2] == '.') {
+			return 0;
+		}
+
+		start = end++;
+	}
+
+	return mountLen;
 }
 
 void releaseSocket(int socket)
@@ -496,6 +530,37 @@ int sendMessage(int socket, char* buffer)
 	return send(socket, buffer, *size, 0);
 }
 
+char* requestOp(char* request, int* err)
+{
+	int socket = aquireSocket();
+	char* response = NULL;
+	*err = 0;
+
+	if (!sendMessage(socket, request)) {
+		*err = ENOTCONN;
+		goto out;
+	}
+
+	free(request);
+
+	if (!readMessage(socket, &response)) {
+		*err = ENOTCONN;
+		goto out;
+	}
+
+	short status = *(short*)(response + sizeof(uint64));
+
+	if (status != HYPERV_OK) {
+		free(response);
+		*err = (int)status;
+		goto out;
+	}
+
+out:
+	releaseSocket(socket);
+	return *err ? NULL : response;
+}
+
 
 
 static void* xmp_init(struct fuse_conn_info* conn,
@@ -525,26 +590,17 @@ static int xmp_getattr(const char* path, struct stat* stbuf,
 	struct fuse_file_info* fi)
 {
 	printf("Function call [getattr] on path %s\n", path);
+
 	(void)fi;
+	int err;
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	char* inBuffer = requestOp(
+		opReadAttr(path),
+		&err
+	);
 
-	ret = opReadAttr(path, &outBuffer);
-
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short status = *(short*)(inBuffer + sizeof(uint64));
-
-	if (status != HYPERV_OK) {
-		free(inBuffer);
-		return -status;
+	if (err) {
+		return -err;
 	}
 
 	HyperVStat* stat = (HyperVStat*)(inBuffer + sizeof(uint64) + sizeof(short));
@@ -576,29 +632,19 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 {
 	printf("Function call [readlink] on path %s\n", path);
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	int err;
 
-	ret = opReadlink(path, &outBuffer);
+	char* inBuffer = requestOp(
+		opReadlink(path),
+		&err
+	);
 
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	int offset = sizeof(uint64);
-	short status = *(short*)(inBuffer + offset);
-
-	if (status != HYPERV_OK) {
-		free(inBuffer);
-		return -status;
+	if (err) {
+		return -err;
 	}
 
 	// fill the buffer with the path
-	offset += sizeof(short);
+	int offset = sizeof(uint64) + sizeof(short);
 	short* ext = (short*)(inBuffer + offset);
 
 	offset += sizeof(short) + sizeof(short);
@@ -618,7 +664,6 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 
 static int xmp_opendir(const char* path, struct fuse_file_info* fi)
 {
-	int res;
 	struct xmp_dirp* d = malloc(sizeof(struct xmp_dirp));
 
 	if (d == NULL) {
@@ -654,24 +699,15 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 		goto fill;
 	}
 
-	int ret;
-	char* outBuffer = NULL;
+	int err;
 
-	ret = opReadDir(path, &outBuffer);
+	inBuffer = requestOp(
+		opReadDir(path),
+		&err
+	);
 
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short* status = (short*)(inBuffer + sizeof(uint64));
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 fill:;
@@ -703,10 +739,12 @@ fill:;
 		st.st_mtim = toTimeSpec(stat->mtime);
 		st.st_ctim = toTimeSpec(stat->ctime);
 
-		if (filler(buf, name, &st, dOffset++, FUSE_FILL_DIR_PLUS)) {
+		if (filler(buf, name, &st, dOffset, FUSE_FILL_DIR_PLUS)) {
 			// buffer is full
 			break;
 		}
+
+		dOffset++;
 	}
 
 	// save the offset and hope we don't have a memory leak
@@ -737,25 +775,15 @@ static int xmp_mkdir(const char* path, mode_t mode)
 {
 	printf("Function call [mkdir] on path %s\n", path);
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	int err;
 
-	ret = opMkdir(path, mode, &outBuffer);
+	char* inBuffer = requestOp(
+		opMkdir(path, mode),
+		&err
+	);
 
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short* status = (short*)(inBuffer + sizeof(uint64));
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -767,25 +795,15 @@ static int xmp_unlink(const char* path)
 {
 	printf("Function call [unlink] on path %s\n", path);
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	int err;
 
-	ret = opUnlink(path, &outBuffer);
+	char* inBuffer = requestOp(
+		opUnlink(path),
+		&err
+	);
 
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short* status = (short*)(inBuffer + sizeof(uint64));
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -797,25 +815,15 @@ static int xmp_rmdir(const char* path)
 {
 	printf("Function call [rmdir] on path %s\n", path);
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	int err;
 
-	ret = opRmdir(path, &outBuffer);
+	char* inBuffer = requestOp(
+		opRmdir(path),
+		&err
+	);
 
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short* status = (short*)(inBuffer + sizeof(uint64));
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -827,39 +835,19 @@ static int xmp_symlink(const char* from, const char* to)
 {
 	printf("Function call [symlink] on path %s to %s\n", from, to);
 
-	char* mountpoint = mountPath();
+	int offset = relativeToMountpoint(mountPath(), from);
+	short ext = offset ? 0 : 1;
 
-	short ext = 1;
-	int mountLen = strlen(mountpoint);
+	int err;
 
-	// TODO: this does not guarantee the path is in the 
-	// mountpoint, something more reliable needs to be used as
-	// realpath does not work for some reason
-	if (strncmp(mountpoint, from, mountLen) == 0) {
-		ext = 0;
-	}
+	char* inBuffer = requestOp(
+		// TODO: maybe send the a flag if from is external if it is a dir
+		opSymlink(from + offset, to, ext),
+		&err
+	);
 
-	int offset = ext ? 0 : mountLen;
-
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
-
-	// TODO: maybe send the a flag if from is external if it is a dir
-	ret = opSymlink(from + offset, to, ext, &outBuffer);
-
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short status = *(short*)(inBuffer + sizeof(uint64));
-
-	if (status != HYPERV_OK) {
-		free(inBuffer);
-		return -status;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -871,25 +859,15 @@ static int xmp_rename(const char* from, const char* to, unsigned int flags)
 {
 	printf("Function call [rename] on path %s\n", from);
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	int err;
 
-	ret = opRename(from, to, &outBuffer);
+	char* inBuffer = requestOp(
+		opRename(from, to),
+		&err
+	);
 
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short* status = (short*)(inBuffer + sizeof(uint64));
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -926,27 +904,15 @@ static int xmp_truncate(const char* path, off_t offset,
 	printf("Function call [truncate] on path %s\n", path);
 
 	(void)fi;
+	int err;
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	char* inBuffer = requestOp(
+		opTruncate(path, offset),
+		&err
+	);
 
-	ret = opTruncate(path, offset, &outBuffer);
-
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	int iOffset = sizeof(uint64);
-	short* status = (short*)(inBuffer + iOffset);
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -960,26 +926,15 @@ static int xmp_create(const char* path, mode_t mode,
 	printf("Function call [create] on path %s\n", path);
 
 	(void)fi;
+	int err;
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	char* inBuffer = requestOp(
+		opCreate(path, mode),
+		&err
+	);
 
-	ret = opCreate(path, mode, &outBuffer);
-
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	short* status = (short*)(inBuffer + sizeof(uint64));
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	free(inBuffer);
@@ -1002,31 +957,19 @@ static int xmp_read(const char* path, char* buf, size_t size, off_t offset,
 	printf("Function call [read] on path %s\n", path);
 
 	(void)fi;
+	int err;
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	char* inBuffer = requestOp(
+		opRead(path, size, offset),
+		&err
+	);
 
-	ret = opRead(path, size, offset, &outBuffer);
-
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	int iOffset = sizeof(uint64);
-	short* status = (short*)(inBuffer + iOffset);
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	uint64 bytesRead = 0;
-	iOffset += sizeof(short);
+	int iOffset = sizeof(uint64) + sizeof(short);
 	memcpy(&bytesRead, inBuffer + iOffset, sizeof(uint64));
 
 	iOffset += sizeof(uint64);
@@ -1043,31 +986,19 @@ static int xmp_write(const char* path, const char* buf, size_t size,
 	printf("Function call [write] on path %s\n", path);
 
 	(void)fi;
+	int err;
 
-	int ret;
-	char* inBuffer = NULL;
-	char* outBuffer = NULL;
+	char* inBuffer = requestOp(
+		opWrite(path, size, offset, buf),
+		&err
+	);
 
-	ret = opWrite(path, size, offset, buf, &outBuffer);
-
-	int socket = aquireSocket();
-	ret = sendMessage(socket, outBuffer);
-	free(outBuffer);
-
-	ret = readMessage(socket, &inBuffer);
-	releaseSocket(socket);
-
-	int iOffset = sizeof(uint64);
-	short* status = (short*)(inBuffer + iOffset);
-
-	if (*status != HYPERV_OK) {
-		free(inBuffer);
-		// TODO: real error handling
-		return -ENOENT;
+	if (err) {
+		return -err;
 	}
 
 	uint64 bytesWritten = 0;
-	iOffset += sizeof(short);
+	int iOffset = sizeof(uint64) + sizeof(short);
 	memcpy(&bytesWritten, inBuffer + iOffset, sizeof(uint64));
 
 	free(inBuffer);
