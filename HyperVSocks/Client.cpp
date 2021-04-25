@@ -12,6 +12,7 @@
 #define SOCKET_NUM 4
 
 #include <fuse.h>
+#include <fuse_lowlevel.h> 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,6 +76,7 @@ struct xmp_dirp {
 
 int sSockets[SOCKET_NUM] = { 0 };
 int changeSocket = 0;
+pthread_mutex_t changeSocketLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t sSocketLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t sSocketCond = PTHREAD_COND_INITIALIZER;
 
@@ -96,11 +98,13 @@ static void* invalidatePath(void* data)
 	char* response = NULL;
 	char* path = NULL;
 
+	pthread_mutex_lock(&changeSocketLock);
+
 	while (readMessage(changeSocket, &response)) {
 		// get path
 		path = (char*)(response + sizeof(uint64) + sizeof(short) + sizeof(short));
 
-		printf("Should invalidate path %s", path);
+		printf("Should invalidate path %s\n", path);
 
 		fuse_invalidate_path(fuse, path);
 
@@ -125,9 +129,7 @@ void opConnect()
 	// one more socket for change detection
 	changeSocket = socket(AF_VSOCK, SOCK_STREAM, 0);
 	connect(changeSocket, (struct sockaddr*)&addr, sizeof addr);
-
-	pthread_t invalidator;
-	pthread_create(&invalidator, NULL, invalidatePath, (void*)fuse_get_context()->fuse);
+	pthread_mutex_unlock(&changeSocketLock);
 }
 
 char* opReadAttr(const char* path)
@@ -1137,6 +1139,80 @@ static const struct fuse_operations xmp_oper = {
 
 int main(int argc, char* argv[])
 {
-	umask(0);
-	return fuse_main(argc, argv, &xmp_oper, NULL);
+	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+	struct fuse* fuse;
+	struct fuse_cmdline_opts opts;
+	struct fuse_loop_config config;
+	int res;
+
+	if (fuse_parse_cmdline(&args, &opts) != 0)
+		return 1;
+
+	if (opts.show_version) {
+		printf("FUSE library version %s\n", fuse_pkgversion());
+		fuse_lowlevel_version();
+		res = 0;
+		goto out1;
+	}
+	else if (opts.show_help) {
+		fuse_cmdline_help();
+		fuse_lib_help(&args);
+		res = 0;
+		goto out1;
+	}
+	else if (!opts.mountpoint) {
+		fprintf(stderr, "error: no mountpoint specified\n");
+		res = 1;
+		goto out1;
+	}
+
+	fuse = fuse_new(&args, &xmp_oper, sizeof(xmp_oper), NULL);
+	if (fuse == NULL) {
+		res = 1;
+		goto out1;
+	}
+
+	if (fuse_mount(fuse, opts.mountpoint) != 0) {
+		res = 1;
+		goto out2;
+	}
+
+	if (fuse_daemonize(opts.foreground) != 0) {
+		res = 1;
+		goto out3;
+	}
+
+	pthread_t updater;
+	pthread_mutex_lock(&changeSocketLock);
+	int ret = pthread_create(&updater, NULL, invalidatePath, (void*)fuse);
+	if (ret != 0) {
+		fprintf(stderr, "pthread_create failed with %s\n", strerror(ret));
+		return 1;
+	};
+
+	struct fuse_session* se = fuse_get_session(fuse);
+	if (fuse_set_signal_handlers(se) != 0) {
+		res = 1;
+		goto out3;
+	}
+
+	if (opts.singlethread)
+		res = fuse_loop(fuse);
+	else {
+		config.clone_fd = opts.clone_fd;
+		config.max_idle_threads = opts.max_idle_threads;
+		res = fuse_loop_mt(fuse, &config);
+	}
+	if (res)
+		res = 1;
+
+	fuse_remove_signal_handlers(se);
+out3:
+	fuse_unmount(fuse);
+out2:
+	fuse_destroy(fuse);
+out1:
+	free(opts.mountpoint);
+	fuse_opt_free_args(&args);
+	return res;
 }
