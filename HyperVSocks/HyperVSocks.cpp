@@ -17,7 +17,7 @@
 
 #define PORT_NUM 5001
 #define MAX_PATH 260
-#define SOCKET_NUM 5
+#define SOCKET_NUM 4
 
 #define TICKS_PER_SECOND 10000000
 #define EPOCH_DIFFERENCE 11644473600
@@ -71,6 +71,17 @@ enum
     HYPERV_LINK = 120,
     HYPERV_READLINK = 130
 };
+
+typedef struct
+{
+    uint64 socket;
+    HANDLE hDir;
+} HyperVWatch;
+
+volatile SOCKET sServer = 0;
+volatile SOCKET dClient = 0;
+volatile SOCKET sClients[SOCKET_NUM] = { 0 };
+volatile int shuttingDown = 0;
 
 void Log(int ret, const char* function, int retZeroSuccess = 1)
 {
@@ -900,23 +911,17 @@ DWORD WINAPI handleOp (void* arg)
 
     } while (ret > 0);
 
-    closesocket(sClient);
-
     return 0;
 }
 
 DWORD WINAPI detectChanges(void* arg)
 {
-    uint64 sClient = *((uint64*)arg);
+    HyperVWatch* watch = (HyperVWatch*)arg;
     byte* buffer = (byte*) malloc(1024);
     uint32 offset;
     uint32 readBytes;
     FILE_NOTIFY_INFORMATION* event = NULL;
-    int success;
-
-    HANDLE hDir = CreateFile(
-        ROOT, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
-    );
+    int success, ret;
 
     uint32 flags = FILE_NOTIFY_CHANGE_FILE_NAME
         | FILE_NOTIFY_CHANGE_DIR_NAME
@@ -927,11 +932,10 @@ DWORD WINAPI detectChanges(void* arg)
         printf("Waiting for notifications...\n");
 
         offset = 0;
-        success = ReadDirectoryChangesW(hDir, buffer, 1024, true, flags, (DWORD*) &readBytes, NULL, NULL);
+        success = ReadDirectoryChangesW(watch->hDir, buffer, 1024, true, flags, (DWORD*) &readBytes, NULL, NULL);
 
         if (!success) {
-            printf("ReadDirectoryChangesW failed.\n");
-            continue;
+            goto out;
         }
         
         do {
@@ -950,28 +954,73 @@ DWORD WINAPI detectChanges(void* arg)
             // send notification
             char* response = NULL;
             opNotify(rPath, &response);
-            sendMessage(sClient, response);
+            ret = sendMessage(watch->socket, response);
             free(rPath);
             free(response);
+
+            // socket is closed
+            if (!ret) {
+                goto out;
+            }
 
             // Are there more events to handle?
             offset += event->NextEntryOffset;
         } while (event->NextEntryOffset);
     }
 
-    CloseHandle(hDir);
+out:
     free(buffer);
 
     return 0;
 }
 
+void closeClientSockets()
+{
+    for (int i = 0; i < SOCKET_NUM; i++) {
+        closesocket(sClients[i]);
+        printf("Client socket closed\n");
+    }
+
+    closesocket(dClient);
+    printf("Change socket closed\n");
+}
+
+BOOL WINAPI ctrlHandler(DWORD type)
+{
+    switch (type)
+    {
+    case CTRL_C_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        shuttingDown = 1;
+
+        // close all sockets, this should trigger a shutdown
+        closeClientSockets();
+
+        closesocket(sServer);
+        printf("Server socket closed\n");
+
+        // should not take more than 100 ms to exit
+        Sleep(100);
+        return true;
+
+    default:
+        return false;
+    }
+}
+
 int main(void)
 {
+    if (!SetConsoleCtrlHandler(ctrlHandler, true)) {
+        return 1;
+    }
+
     WSADATA wdata;
     int ret = WSAStartup(MAKEWORD(2,2), &wdata);
     Log(ret, "WSAStartup");
 
-    SOCKET sServer = socket(AF_HYPERV, SOCK_STREAM, HV_PROTOCOL_RAW);
+    sServer = socket(AF_HYPERV, SOCK_STREAM, HV_PROTOCOL_RAW);
     Log(sServer, "server socket", 0);
 
     SOCKADDR_HV addr = { 0 };
@@ -982,33 +1031,57 @@ int main(void)
     ret = bind(sServer, (struct sockaddr*)&addr, sizeof addr);
     Log(ret, "bind");
 
-    ret = listen(sServer, SOCKET_NUM);
+    ret = listen(sServer, SOCKET_NUM + 1);
     Log(ret, "listen");
 
-    SOCKET sClients[SOCKET_NUM] = { 0 };
-    HANDLE threads[SOCKET_NUM] = { 0 };
+    HANDLE dThread = 0;
+    HANDLE hDir = CreateFile(
+        ROOT, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
+    );
 
-    accept:
+    HANDLE threads[SOCKET_NUM] = { 0 };
+    HyperVWatch watch = { 0 };
+
+accept:
     for (int i = 0; i < SOCKET_NUM; i++) {
         sClients[i] = accept(sServer, NULL, NULL);
-        Log(sClients[i], "client socket", 0);
 
-        // last thread is for change detection
-        threads[i] = i == SOCKET_NUM - 1
-            ? CreateThread(NULL, 0, detectChanges, (void*) &sClients[i], 0, NULL)
-            : CreateThread(NULL, 0, handleOp, (void*) &sClients[i], 0, NULL);
+        if (shuttingDown) {
+            goto out;
+        }
+
+        printf("Client socket connected\n");
+        threads[i] = CreateThread(NULL, 0, handleOp, (void*)&sClients[i], 0, NULL);
     }
 
+    // accept the change detection socket
+    dClient = accept(sServer, NULL, NULL);
+    printf("Change socket connected\n");
+    watch = { dClient, hDir };
+    dThread = CreateThread(NULL, 0, detectChanges, (void*)&watch, 0, NULL);
+
+    // wait untill the client disconnects
     WaitForMultipleObjects(SOCKET_NUM, threads, true, INFINITE);
 
+    // cleanup threads
     for (int i = 0; i < SOCKET_NUM; i++) {
         CloseHandle(threads[i]);
-        Log(closesocket(sClients[i]), "client socket closed");
     }
 
-    goto accept;
+    // stop the change detection theread
+    CancelIoEx(hDir, NULL);
+    WaitForSingleObject(dThread, INFINITE);
+    CloseHandle(dThread);
 
-    closesocket(sServer);
+    if (!shuttingDown) {
+        // close sockets, accept new client
+        closeClientSockets();
+        goto accept;
+    }
+
+out:
+    printf("Shutting down...\n");
+    CloseHandle(hDir);
     WSACleanup();
     return 0;
 }
