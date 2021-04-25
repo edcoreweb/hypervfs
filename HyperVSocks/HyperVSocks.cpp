@@ -247,6 +247,21 @@ char* makeLocalPath(const char* path, const char* name)
     return filePath;
 }
 
+int opNotify(char* path, char** outBuffer)
+{
+    int pathLen = strlen(path) + 1;
+    uint64 size = sizeof(uint64) + sizeof(short) + sizeof(short) + pathLen;
+    *outBuffer = (char*)malloc(size);
+
+    short status = HYPERV_OK;
+    memcpy(*outBuffer, &size, sizeof(uint64));
+    memcpy(*outBuffer + sizeof(uint64), &status, sizeof(short));
+    memcpy(*outBuffer + sizeof(uint64) + sizeof(short), &pathLen, sizeof(short));
+    memcpy(*outBuffer + sizeof(uint64) + sizeof(short) + sizeof(short), path, pathLen);
+
+    return (int)size;
+}
+
 int opError(short err, char** outBuffer)
 {
     uint64 size = sizeof(uint64) + sizeof(short);
@@ -921,7 +936,23 @@ DWORD WINAPI detectChanges(void* arg)
         
         do {
             event = (FILE_NOTIFY_INFORMATION*)(buffer + offset);
-            printf("SOMETHING CHANGED!\n");
+
+            int pathLen = event->FileNameLength / sizeof(WCHAR);
+            char* path = (char*)calloc(1, pathLen + 2);
+            path[0] = '\\';
+            wcstombs(path + 1, event->FileName, pathLen);
+
+            char* rPath = makeRemotePath("", path);
+            free(path);
+            printf("Path changed: %s\n", rPath);
+
+            // TODO: maybe batch notifications, and do some error handling
+            // send notification
+            char* response = NULL;
+            opNotify(rPath, &response);
+            sendMessage(sClient, response);
+            free(rPath);
+            free(response);
 
             // Are there more events to handle?
             offset = event->NextEntryOffset;

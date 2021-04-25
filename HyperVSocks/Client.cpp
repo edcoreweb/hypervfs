@@ -9,7 +9,7 @@
 #define _GNU_SOURCE
 
 #define PORT_NUM 5001
-#define SOCKET_NUM 5
+#define SOCKET_NUM 4
 
 #include <fuse.h>
 #include <stdio.h>
@@ -74,8 +74,11 @@ struct xmp_dirp {
 };
 
 int sSockets[SOCKET_NUM] = { 0 };
+int changeSocket = 0;
 pthread_mutex_t sSocketLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t sSocketCond = PTHREAD_COND_INITIALIZER;
+
+int readMessage(int socket, char** buffer);
 
 struct timespec toTimeSpec(uint32 sec)
 {
@@ -85,6 +88,26 @@ struct timespec toTimeSpec(uint32 sec)
 	};
 
 	return time;
+}
+
+static void* invalidatePath(void* data)
+{
+	struct fuse* fuse = (struct fuse*)data;
+	char* response = NULL;
+	char* path = NULL;
+
+	while (readMessage(changeSocket, &response)) {
+		// get path
+		path = (char*)(response + sizeof(uint64) + sizeof(short) + sizeof(short));
+
+		printf("Should invalidate path %s", path);
+
+		fuse_invalidate_path(fuse, path);
+
+		free(response);
+	}
+
+	return NULL;
 }
 
 void opConnect()
@@ -98,6 +121,13 @@ void opConnect()
 		sSockets[i] = socket(AF_VSOCK, SOCK_STREAM, 0);
 		connect(sSockets[i], (struct sockaddr*)&addr, sizeof addr);
 	}
+
+	// one more socket for change detection
+	changeSocket = socket(AF_VSOCK, SOCK_STREAM, 0);
+	connect(changeSocket, (struct sockaddr*)&addr, sizeof addr);
+
+	pthread_t invalidator;
+	pthread_create(&invalidator, NULL, invalidatePath, (void*)fuse_get_context()->fuse);
 }
 
 char* opReadAttr(const char* path)
@@ -598,18 +628,11 @@ static void* xmp_init(struct fuse_conn_info* conn,
 {
 	printf("Function call [init]\n");
 	(void)conn;
-	cfg->use_ino = 1;
 
-	/* Pick up changes from lower filesystem right away. This is
-	   also necessary for better hardlink support. When the kernel
-	   calls the unlink() handler, it does not know the inode of
-	   the to-be-removed entry and can therefore not invalidate
-	   the cache of the associated inode - resulting in an
-	   incorrect st_nlink value being reported for any remaining
-	   hardlinks to this inode. */
-	   // cfg->entry_timeout = 500;
-	   // cfg->attr_timeout = 500;
-	   // cfg->negative_timeout = 500;
+	cfg->use_ino = 1;
+	cfg->entry_timeout = 500000;
+	cfg->attr_timeout = 500000;
+	cfg->negative_timeout = 500000;
 
 	opConnect();
 
