@@ -27,7 +27,7 @@
 #define S_IFREG	0100000 /* Regular file.  */
 #define S_IFLNK	0120000 /* Symbolic link.  */
 
-#define ROOT "H:\\WORK\\vhosts\\kabel"
+#define ROOT "H:\\WORK\\vhosts"
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -955,8 +955,8 @@ DWORD WINAPI detectChanges(void* arg)
             free(response);
 
             // Are there more events to handle?
-            offset = event->NextEntryOffset;
-        } while (offset);
+            offset += event->NextEntryOffset;
+        } while (event->NextEntryOffset);
     }
 
     CloseHandle(hDir);
