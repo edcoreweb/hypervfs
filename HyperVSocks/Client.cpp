@@ -9,7 +9,7 @@
 #define _GNU_SOURCE
 
 #define PORT_NUM 5001
-#define SOCKET_NUM 4
+#define SOCKET_NUM 5
 
 #include <fuse.h>
 #include <stdio.h>

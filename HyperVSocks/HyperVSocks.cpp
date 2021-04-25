@@ -16,9 +16,8 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 #define PORT_NUM 5001
-#define BUFF_SIZE 512
 #define MAX_PATH 260
-#define SOCKET_NUM 4
+#define SOCKET_NUM 5
 
 #define TICKS_PER_SECOND 10000000
 #define EPOCH_DIFFERENCE 11644473600
@@ -891,6 +890,53 @@ DWORD WINAPI handleOp (void* arg)
     return 0;
 }
 
+DWORD WINAPI detectChanges(void* arg)
+{
+    uint64 sClient = *((uint64*)arg);
+    byte* buffer = (byte*) malloc(1024);
+    uint32 readBytes;
+    FILE_NOTIFY_INFORMATION* event = NULL;
+    int success;
+
+    HANDLE hDir = CreateFile(
+        ROOT, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
+    );
+
+    uint32 flags = FILE_NOTIFY_CHANGE_FILE_NAME
+        | FILE_NOTIFY_CHANGE_DIR_NAME
+        | FILE_NOTIFY_CHANGE_ATTRIBUTES
+        | FILE_NOTIFY_CHANGE_LAST_WRITE;
+
+    for (;;) {
+        printf("Waiting for notifications...\n");
+
+        success = ReadDirectoryChangesW(hDir, buffer, 1024, true, flags, (DWORD*) &readBytes, NULL, NULL);
+
+        if (!success) {
+            printf("ReadDirectoryChangesW failed.\n");
+            continue;
+        }
+
+        for (;;) {
+            event = (FILE_NOTIFY_INFORMATION*)buffer;
+            printf("SOMETHING CHANGED!\n");
+
+            // Are there more events to handle?
+            if (!event->NextEntryOffset) {
+                break;
+            }
+
+            // next item
+            *((byte**)&event) += event->NextEntryOffset;
+        }
+    }
+
+    CloseHandle(hDir);
+    free(buffer);
+
+    return 0;
+}
+
 int main(void)
 {
     WSADATA wdata;
@@ -918,7 +964,11 @@ int main(void)
     for (int i = 0; i < SOCKET_NUM; i++) {
         sClients[i] = accept(sServer, NULL, NULL);
         Log(sClients[i], "client socket", 0);
-        threads[i] = CreateThread(NULL, 0, handleOp, (void*) &sClients[i], 0, NULL);
+
+        // last thread is for change detection
+        threads[i] = i == SOCKET_NUM - 1
+            ? CreateThread(NULL, 0, detectChanges, (void*) &sClients[i], 0, NULL)
+            : CreateThread(NULL, 0, handleOp, (void*) &sClients[i], 0, NULL);
     }
 
     WaitForMultipleObjects(SOCKET_NUM, threads, true, INFINITE);
