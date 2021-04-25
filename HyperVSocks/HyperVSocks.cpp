@@ -894,12 +894,13 @@ DWORD WINAPI detectChanges(void* arg)
 {
     uint64 sClient = *((uint64*)arg);
     byte* buffer = (byte*) malloc(1024);
+    uint32 offset;
     uint32 readBytes;
     FILE_NOTIFY_INFORMATION* event = NULL;
     int success;
 
     HANDLE hDir = CreateFile(
-        ROOT, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
+        ROOT, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL
     );
 
     uint32 flags = FILE_NOTIFY_CHANGE_FILE_NAME
@@ -910,25 +911,21 @@ DWORD WINAPI detectChanges(void* arg)
     for (;;) {
         printf("Waiting for notifications...\n");
 
+        offset = 0;
         success = ReadDirectoryChangesW(hDir, buffer, 1024, true, flags, (DWORD*) &readBytes, NULL, NULL);
 
         if (!success) {
             printf("ReadDirectoryChangesW failed.\n");
             continue;
         }
-
-        for (;;) {
-            event = (FILE_NOTIFY_INFORMATION*)buffer;
+        
+        do {
+            event = (FILE_NOTIFY_INFORMATION*)(buffer + offset);
             printf("SOMETHING CHANGED!\n");
 
             // Are there more events to handle?
-            if (!event->NextEntryOffset) {
-                break;
-            }
-
-            // next item
-            *((byte**)&event) += event->NextEntryOffset;
-        }
+            offset = event->NextEntryOffset;
+        } while (offset);
     }
 
     CloseHandle(hDir);
