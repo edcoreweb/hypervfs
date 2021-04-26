@@ -92,6 +92,11 @@ struct timespec toTimeSpec(uint32 sec)
 	return time;
 }
 
+static void signalExit(struct fuse* fuse)
+{
+	fuse_session_exit(fuse_get_session(fuse));
+}
+
 static void* invalidatePath(void* data)
 {
 	struct fuse* fuse = (struct fuse*)data;
@@ -111,25 +116,12 @@ static void* invalidatePath(void* data)
 		free(response);
 	}
 
-	return NULL;
-}
-
-void opConnect()
-{
-	struct sockaddr_vm addr = { 0 };
-	addr.svm_family = AF_VSOCK;
-	addr.svm_port = PORT_NUM;
-	addr.svm_cid = VMADDR_CID_HOST;
-
-	for (int i = 0; i < SOCKET_NUM; i++) {
-		sSockets[i] = socket(AF_VSOCK, SOCK_STREAM, 0);
-		connect(sSockets[i], (struct sockaddr*)&addr, sizeof addr);
-	}
-
-	// one more socket for change detection
-	changeSocket = socket(AF_VSOCK, SOCK_STREAM, 0);
-	connect(changeSocket, (struct sockaddr*)&addr, sizeof addr);
 	pthread_mutex_unlock(&changeSocketLock);
+
+	// socket was closed
+	signalExit(fuse);
+
+	return NULL;
 }
 
 char* opReadAttr(const char* path)
@@ -599,13 +591,13 @@ char* requestOp(char* request, int* err)
 	*err = 0;
 
 	if (!sendMessage(socket, request)) {
+		signalExit(fuse_get_context()->fuse);
 		*err = ENOTCONN;
 		goto out;
 	}
 
-	free(request);
-
 	if (!readMessage(socket, &response)) {
+		signalExit(fuse_get_context()->fuse);
 		*err = ENOTCONN;
 		goto out;
 	}
@@ -619,6 +611,7 @@ char* requestOp(char* request, int* err)
 	}
 
 out:
+	free(request);
 	releaseSocket(socket);
 	return *err ? NULL : response;
 }
@@ -635,8 +628,6 @@ static void* xmp_init(struct fuse_conn_info* conn,
 	cfg->entry_timeout = 500000;
 	cfg->attr_timeout = 500000;
 	cfg->negative_timeout = 500000;
-
-	opConnect();
 
 	return NULL;
 }
@@ -1137,6 +1128,38 @@ static const struct fuse_operations xmp_oper = {
 	.lseek = xmp_lseek,
 };
 
+void opConnect()
+{
+	struct sockaddr_vm addr = { 0 };
+	addr.svm_family = AF_VSOCK;
+	addr.svm_port = PORT_NUM;
+	addr.svm_cid = VMADDR_CID_HOST;
+
+	for (int i = 0; i < SOCKET_NUM; i++) {
+		sSockets[i] = socket(AF_VSOCK, SOCK_STREAM, 0);
+		connect(sSockets[i], (struct sockaddr*)&addr, sizeof addr);
+	}
+
+	// one more socket for change detection
+	changeSocket = socket(AF_VSOCK, SOCK_STREAM, 0);
+	connect(changeSocket, (struct sockaddr*)&addr, sizeof addr);
+	pthread_mutex_unlock(&changeSocketLock);
+}
+
+void opDisconnect()
+{
+	pthread_cond_destroy(&sSocketCond);
+	pthread_mutex_destroy(&sSocketLock);
+	pthread_mutex_destroy(&changeSocketLock);
+
+	// close sockets
+	for (int i = 0; i < SOCKET_NUM; i++) {
+		close(sSockets[i]);
+	}
+
+	close(changeSocket);
+}
+
 int main(int argc, char* argv[])
 {
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
@@ -1188,7 +1211,9 @@ int main(int argc, char* argv[])
 	if (ret != 0) {
 		fprintf(stderr, "pthread_create failed with %s\n", strerror(ret));
 		return 1;
-	};
+	}
+
+	opConnect();
 
 	struct fuse_session* se = fuse_get_session(fuse);
 	if (fuse_set_signal_handlers(se) != 0) {
@@ -1205,6 +1230,8 @@ int main(int argc, char* argv[])
 	}
 	if (res)
 		res = 1;
+
+	opDisconnect();
 
 	fuse_remove_signal_handlers(se);
 out3:
