@@ -3,14 +3,20 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <hvsocket.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <combaseapi.h>
 #include <windows.h>
-#include <winioctl.h>
 #include <comdef.h>
 #include "windep.h"
+
+#ifdef VMWARE
+#include "vmci_sockets.h"
+#else
+#include <winioctl.h>
+#include <hvsocket.h>
+#endif
+
 
 // link with Ws2_32.lib
 #pragma comment(lib, "Ws2_32.lib")
@@ -18,6 +24,7 @@
 #define PORT_NUM 5001
 #define MAX_PATH 260
 #define SOCKET_NUM 4
+#define VMADDR_CID_HOST 2
 
 #define TICKS_PER_SECOND 10000000
 #define EPOCH_DIFFERENCE 11644473600
@@ -27,7 +34,7 @@
 #define S_IFREG	0100000 /* Regular file.  */
 #define S_IFLNK	0120000 /* Symbolic link.  */
 
-#define ROOT "H:\\WORK\\vhosts"
+#define ROOT "D:\\vhosts"
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -1020,13 +1027,25 @@ int main(void)
     int ret = WSAStartup(MAKEWORD(2,2), &wdata);
     Log(ret, "WSAStartup");
 
+#ifdef VMWARE
+    int family = VMCISock_GetAFValue();
+    sServer = socket(family, SOCK_STREAM, 0);
+#else
     sServer = socket(AF_HYPERV, SOCK_STREAM, HV_PROTOCOL_RAW);
+#endif
     Log(sServer, "server socket", 0);
 
+#ifdef VMWARE
+    struct sockaddr_vm addr = { 0 };
+    addr.svm_family = family;
+    addr.svm_cid = VMADDR_CID_HOST;
+    addr.svm_port = PORT_NUM;
+#else
     SOCKADDR_HV addr = { 0 };
     addr.Family = AF_HYPERV;
     addr.ServiceId = HV_GUID_VSOCK_TEMPLATE;
     addr.ServiceId.Data1 = PORT_NUM;
+#endif
 
     ret = bind(sServer, (struct sockaddr*)&addr, sizeof addr);
     Log(ret, "bind");

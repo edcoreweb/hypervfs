@@ -26,5 +26,8 @@
     <ClInclude Include="windep.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="vmci_sockets.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
