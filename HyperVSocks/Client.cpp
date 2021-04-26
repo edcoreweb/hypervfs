@@ -70,8 +70,6 @@ enum
 
 struct xmp_dirp {
 	void* entry;
-	uint64 readSize;
-	int64 offset;
 };
 
 int sSockets[SOCKET_NUM] = { 0 };
@@ -710,6 +708,8 @@ static int xmp_readlink(const char* path, char* buf, size_t size)
 
 static int xmp_opendir(const char* path, struct fuse_file_info* fi)
 {
+	printf("Function call [opendir] on path %s\n", path);
+
 	struct xmp_dirp* d = malloc(sizeof(struct xmp_dirp));
 
 	if (d == NULL) {
@@ -717,10 +717,8 @@ static int xmp_opendir(const char* path, struct fuse_file_info* fi)
 	}
 
 	d->entry = NULL;
-	d->offset = 0;
-	d->readSize = 0;
-
 	fi->fh = (uint64)d;
+
 	return 0;
 }
 
@@ -733,15 +731,11 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	(void)flags;
 
 	char* inBuffer = NULL;
-	int64 dOffset = 1;
-	uint64 readSize = sizeof(uint64) + sizeof(short);
 	struct xmp_dirp* d = (struct xmp_dirp*)fi->fh;
 
-	// if we have a offset, we don't need to fetch again
-	if (d->offset) {
-		dOffset = d->offset;
+	// if we have a entry, we don't need to fetch again
+	if (d->entry) {
 		inBuffer = (char*)d->entry;
-		readSize = d->readSize;
 		goto fill;
 	}
 
@@ -757,7 +751,16 @@ static int xmp_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 	}
 
 fill:;
+	int64 dOffset = 1;
+	uint64 readSize = sizeof(uint64) + sizeof(short);
 	uint64* size = (uint64*)inBuffer;
+
+	// seek to the correct offset position
+	while (dOffset < offset + 1 && *size > readSize) {
+		short* nLen = (short*)(inBuffer + readSize);
+		readSize += sizeof(short) + *nLen + sizeof(HyperVStat);
+		dOffset++;
+	}
 
 	while (*size > readSize) {
 		// we also have the name size, but names are NULL terminated
@@ -793,20 +796,27 @@ fill:;
 		dOffset++;
 	}
 
-	// save the offset and hope we don't have a memory leak
+	// save the buffer and hope we don't have a memory leak
 	d->entry = (void*)inBuffer;
-	d->readSize = readSize;
-	d->offset = dOffset;
 
 	return 0;
 }
 
 static int xmp_releasedir(const char* path, struct fuse_file_info* fi)
 {
-	struct xmp_dirp* d = (struct xmp_dirp*)fi->fh;
+	printf("Function call [releasedir] on path %s\n", path);
+
 	(void)path;
-	free(d->entry);
+
+	struct xmp_dirp* d = (struct xmp_dirp*)fi->fh;
+
+	if (d->entry) {
+		free(d->entry);
+	}
+
 	free(d);
+	fi->fh = 0;
+
 	return 0;
 }
 
