@@ -17,14 +17,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <dirent.h>
 #include <errno.h>
-#include <sys/time.h>
 #include <sys/socket.h>
-#include <linux/vm_sockets.h>
 #include <pthread.h>
+
+#if defined VMNET
+#include <netinet/ip.h>
+#include <arpa/inet.h>
+#else
+#include <linux/vm_sockets.h>
+#endif
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
@@ -1176,19 +1178,28 @@ static const struct fuse_operations xmp_oper = {
 
 void opConnect()
 {
+#if defined VMNET
+	int family = AF_INET;
+	struct sockaddr_in addr = { 0 };
+	addr.sin_family = family;
+	inet_pton(family, "192.168.0.100", &addr.sin_addr);
+	addr.sin_port = htons(PORT_NUM);
+#else
+	int family = AF_VSOCK;
 	struct sockaddr_vm addr = { 0 };
 	addr.svm_family = AF_VSOCK;
 	addr.svm_port = PORT_NUM;
 	addr.svm_cid = VMADDR_CID_HOST;
+#endif
 
 	for (int i = 0; i < SOCKET_NUM; i++) {
-		sSockets[i] = socket(AF_VSOCK, SOCK_STREAM, 0);
+		sSockets[i] = socket(family, SOCK_STREAM, 0);
 		connect(sSockets[i], (struct sockaddr*)&addr, sizeof addr);
 		enqueue(&queue, sSockets[i]);
 	}
 
 	// one more socket for change detection
-	changeSocket = socket(AF_VSOCK, SOCK_STREAM, 0);
+	changeSocket = socket(family, SOCK_STREAM, 0);
 	connect(changeSocket, (struct sockaddr*)&addr, sizeof addr);
 	pthread_mutex_unlock(&changeSocketLock);
 }

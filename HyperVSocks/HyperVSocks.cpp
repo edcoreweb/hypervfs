@@ -5,15 +5,14 @@
 #include <ws2tcpip.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <combaseapi.h>
+#include <stdlib.h>
 #include <windows.h>
-#include <comdef.h>
+#include <winioctl.h>
 #include "windep.h"
 
 #ifdef VMWARE
 #include "vmci_sockets.h"
-#else
-#include <winioctl.h>
+#elif !defined VMNET
 #include <hvsocket.h>
 #endif
 
@@ -34,11 +33,12 @@
 #define S_IFREG	0100000 /* Regular file.  */
 #define S_IFLNK	0120000 /* Symbolic link.  */
 
-#define ROOT "D:\\vhosts"
+#define ROOT "H:\\WORK\\vhosts"
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;
 typedef int64_t int64;
+typedef unsigned char byte;
 
 // this needs to be aligned
 typedef struct
@@ -1027,25 +1027,31 @@ int main(void)
     int ret = WSAStartup(MAKEWORD(2,2), &wdata);
     Log(ret, "WSAStartup");
 
-#ifdef VMWARE
+#if defined VMWARE
     int family = VMCISock_GetAFValue();
-    sServer = socket(family, SOCK_STREAM, 0);
-#else
-    sServer = socket(AF_HYPERV, SOCK_STREAM, HV_PROTOCOL_RAW);
-#endif
-    Log(sServer, "server socket", 0);
-
-#ifdef VMWARE
+    int protocol = 0;
     struct sockaddr_vm addr = { 0 };
     addr.svm_family = family;
     addr.svm_cid = VMADDR_CID_HOST;
     addr.svm_port = PORT_NUM;
+#elif defined VMNET
+    int family = AF_INET;
+    int protocol = 0;
+    struct sockaddr_in addr = { 0 };
+    addr.sin_family = family;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(PORT_NUM);
 #else
+    int family = AF_HYPERV;
+    int protocol = HV_PROTOCOL_RAW;
     SOCKADDR_HV addr = { 0 };
-    addr.Family = AF_HYPERV;
+    addr.Family = family;
     addr.ServiceId = HV_GUID_VSOCK_TEMPLATE;
     addr.ServiceId.Data1 = PORT_NUM;
 #endif
+
+    sServer = socket(family, SOCK_STREAM, protocol);
+    Log(sServer, "server socket", 0);
 
     ret = bind(sServer, (struct sockaddr*)&addr, sizeof addr);
     Log(ret, "bind");
