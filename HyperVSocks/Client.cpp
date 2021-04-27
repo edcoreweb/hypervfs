@@ -72,13 +72,90 @@ struct xmp_dirp {
 	void* entry;
 };
 
+typedef struct QueueNode {
+	int socket;
+	struct QueueNode* next;
+} QueueNode;
+
+typedef struct {
+	QueueNode* head;
+	QueueNode* tail;
+} Queue;
+
 int sSockets[SOCKET_NUM] = { 0 };
 int changeSocket = 0;
+Queue queue = { 0 };
 pthread_mutex_t changeSocketLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t sSocketLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t sSocketCond = PTHREAD_COND_INITIALIZER;
 
 int readMessage(int socket, char** buffer);
+
+void enqueue(Queue* queue, int socket)
+{
+	QueueNode* node = (QueueNode*)malloc(sizeof(QueueNode));
+	node->socket = socket;
+	node->next = NULL;
+
+	if (queue->tail) {
+		queue->tail->next = node;
+	}
+
+	queue->tail = node;
+
+	if (!queue->head) {
+		queue->head = queue->tail;
+	}
+}
+
+int dequeue(Queue* queue)
+{
+	if (!queue->head) {
+		return 0;
+	}
+
+	QueueNode* node = queue->head;
+
+	if (node->next) {
+		queue->head = node->next;
+	}
+	else {
+		queue->head = queue->tail = NULL;
+	}
+
+	int socket = node->socket;
+	free(node);
+
+	return socket;
+}
+
+int aquireSocket()
+{
+	pthread_mutex_lock(&sSocketLock);
+
+aquire:;
+	int socket = dequeue(&queue);
+
+	if (!socket) {
+		pthread_cond_wait(&sSocketCond, &sSocketLock);
+		goto aquire;
+	}
+
+	pthread_mutex_unlock(&sSocketLock);
+
+	return socket;
+}
+
+void releaseSocket(int socket)
+{
+	pthread_mutex_lock(&sSocketLock);
+
+	enqueue(&queue, socket);
+
+	pthread_cond_signal(&sSocketCond);
+
+	pthread_mutex_unlock(&sSocketLock);
+}
 
 struct timespec toTimeSpec(uint32 sec)
 {
@@ -442,31 +519,6 @@ char* opReadlink(const char* path)
 	return request;
 }
 
-int aquireSocket()
-{
-	pthread_mutex_lock(&sSocketLock);
-
-	// 	int socket = 0;
-
-	// aquire:
-	// 	for (int i = 0; i < SOCKET_NUM; i++) {
-	// 		if (sSockets[i]) {
-	// 			socket = sSockets[i];
-	// 			sSockets[i] = 0;
-	// 		}
-	// 	}
-
-	// 	if (!socket) {
-	// 		pthread_cond_wait(&sSocketCond, &sSocketLock);
-	// 		goto aquire;
-	// 	}
-
-
-	// 	pthread_mutex_unlock(&sSocketLock);
-
-	return sSockets[0];
-}
-
 char* mountPath()
 {
 	return *((char**)fuse_get_session(fuse_get_context()->fuse));
@@ -520,22 +572,6 @@ int relativeToMountpoint(const char* mountpoint, const char* path)
 	}
 
 	return mountLen;
-}
-
-void releaseSocket(int socket)
-{
-	// pthread_mutex_lock(&sSocketLock);
-
-	// // find first empty position
-	// for (int i = 0; i < SOCKET_NUM; i++) {
-	// 	if (!sSockets[i]) {
-	// 		sSockets[i] = socket;
-	// 	}
-	// }
-
-	// pthread_cond_signal(&sSocketCond);
-
-	pthread_mutex_unlock(&sSocketLock);
 }
 
 int readMessage(int socket, char** buffer)
@@ -1148,6 +1184,7 @@ void opConnect()
 	for (int i = 0; i < SOCKET_NUM; i++) {
 		sSockets[i] = socket(AF_VSOCK, SOCK_STREAM, 0);
 		connect(sSockets[i], (struct sockaddr*)&addr, sizeof addr);
+		enqueue(&queue, sSockets[i]);
 	}
 
 	// one more socket for change detection
