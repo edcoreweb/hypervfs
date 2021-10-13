@@ -1148,6 +1148,13 @@ static off_t xmp_lseek(const char* path, off_t off, int whence, struct fuse_file
 	return -ENOSYS;
 }
 
+static int xmp_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
+{
+    fprintf(stderr, "UNIMPLEMENTED: Function call [utimens] on path %s\n", path);
+
+	return 0;
+}
+
 static const struct fuse_operations xmp_oper = {
 	.init = xmp_init,
 	.getattr = xmp_getattr,
@@ -1174,6 +1181,7 @@ static const struct fuse_operations xmp_oper = {
 	.release = xmp_release,
 	.fsync = xmp_fsync,
 	.lseek = xmp_lseek,
+	.utimens = xmp_utimens,
 };
 
 void opConnect()
