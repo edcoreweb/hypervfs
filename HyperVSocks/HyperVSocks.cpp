@@ -399,6 +399,7 @@ int opReadDir(char* inBuffer, char** outBuffer)
         bufferSize += sizeof(HyperVStat);
     } while (FindNextFile(handle, &fileinfo) != 0);
 
+    FindClose(handle);
 
     // prefix it with the status and final size
     short status = HYPERV_OK;
@@ -654,7 +655,8 @@ int opRename(char* inBuffer, char** outBuffer)
     char* fromPath = makeLocalPath(ROOT, from);
     char* toPath = makeLocalPath(ROOT, to);
 
-    int success = MoveFile(fromPath, toPath);
+    // TODO: error handling, and see if MOVEFILE_COPY_ALLOWED is needed
+    int success = MoveFileEx(fromPath, toPath, MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
     free(fromPath);
     free(toPath);
 
